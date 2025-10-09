@@ -206,7 +206,7 @@ async def predict(request: PredictRequest):
         import ee
         polygon = merged_processor.create_geometry_from_geojson(geojson_dict)
         yield_image = ee.Image.constant(predicted_yield).clip(polygon)
-        asset_id = f"projects/sih2k25-472714/assets/predicted_yield_{int(datetime.now().timestamp())}"
+        asset_id = f"projects/pk07007/assets/predicted_yield_{int(datetime.now().timestamp())}"
         task = ee.batch.Export.image.toAsset(
             image=yield_image,
             description='Predicted Yield',

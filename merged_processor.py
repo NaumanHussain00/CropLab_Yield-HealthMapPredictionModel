@@ -26,11 +26,11 @@ MAX_PIXELS = 1e10
 
 # Sensor assets (same as main_sensor.py)
 SENSOR_ASSETS = {
-    'ECe': 'projects/sih2k25-472714/assets/ECe',
-    'N': 'projects/sih2k25-472714/assets/N',
-    'P': 'projects/sih2k25-472714/assets/P',
-    'pH': 'projects/sih2k25-472714/assets/pH',
-    'OC': 'projects/sih2k25-472714/assets/OC'
+    'ECe': 'projects/pk07007/assets/ECe',
+    'N': 'projects/pk07007/assets/N',
+    'P': 'projects/pk07007/assets/P',
+    'pH': 'projects/pk07007/assets/pH',
+    'OC': 'projects/pk07007/assets/OC'
 }
 
 def initialize_earth_engine():
@@ -51,7 +51,7 @@ def initialize_earth_engine():
             # Create service account credentials from environment variables
             service_account_info = {
                 "type": "service_account",
-                "project_id": os.getenv('GEE_PROJECT_ID', 'sih2k25-472714'),
+                "project_id": os.getenv('GEE_PROJECT_ID', 'pk07007'),
                 "private_key_id": os.getenv('GEE_PRIVATE_KEY_ID'),
                 "private_key": os.getenv('GEE_PRIVATE_KEY').replace('\\n', '\n'),
                 "client_email": os.getenv('GEE_SERVICE_ACCOUNT_EMAIL'),

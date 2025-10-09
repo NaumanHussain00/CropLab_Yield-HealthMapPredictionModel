@@ -15,15 +15,17 @@ This guide will help you deploy the Crop Yield Prediction API to Render.
 You need to set these environment variables in Render:
 
 ### Required Google Earth Engine Credentials:
+
 ```
-GEE_SERVICE_ACCOUNT_EMAIL=farm-monitoring-service@sih2k25-472714.iam.gserviceaccount.com
-GEE_PROJECT_ID=sih2k25-472714
+GEE_SERVICE_ACCOUNT_EMAIL=farm-monitoring-service@pk07007.iam.gserviceaccount.com
+GEE_PROJECT_ID=pk07007
 GEE_PRIVATE_KEY_ID=a1967074c8dfb1aa1502222cde67f755938a9a6e
 GEE_CLIENT_ID=109079035971556167013
-GEE_CLIENT_CERT_URL=https://www.googleapis.com/robot/v1/metadata/x509/farm-monitoring-service%40sih2k25-472714.iam.gserviceaccount.com
+GEE_CLIENT_CERT_URL=https://www.googleapis.com/robot/v1/metadata/x509/farm-monitoring-service%40pk07007.iam.gserviceaccount.com
 ```
 
 ### Private Key (IMPORTANT):
+
 ```
 GEE_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDDFDQ0t/P9X77V
@@ -62,6 +64,7 @@ LD7JFIMAWJ7Yb/e658+laNc=
 ### Option 1: Direct Git Deploy (Recommended)
 
 1. **Push to GitHub**:
+
    ```bash
    git add .
    git commit -m "Prepare for Render deployment"
@@ -69,18 +72,21 @@ LD7JFIMAWJ7Yb/e658+laNc=
    ```
 
 2. **Create Render Service**:
+
    - Go to [render.com](https://render.com)
    - Click "New" → "Web Service"
    - Connect your GitHub repository
    - Choose the repository with your code
 
 3. **Configure Service**:
+
    - **Name**: `croplab-ml-api`
    - **Runtime**: `Python 3`
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `uvicorn app:app --host 0.0.0.0 --port $PORT`
 
 4. **Set Environment Variables**:
+
    - Go to "Environment" tab
    - Add all the GEE variables listed above
    - ⚠️ Make sure to paste the private key exactly as shown
@@ -94,6 +100,7 @@ LD7JFIMAWJ7Yb/e658+laNc=
 If you prefer Docker:
 
 1. **Build and test locally**:
+
    ```bash
    docker build -t croplab-ml-api .
    docker run -p 8000:8000 --env-file .env croplab-ml-api
@@ -108,6 +115,7 @@ If you prefer Docker:
 Once deployed, test your endpoints:
 
 1. **Health Check**:
+
    ```bash
    curl https://your-app-name.onrender.com/health
    ```
@@ -119,7 +127,7 @@ Once deployed, test your endpoints:
      -d '{
        "coordinates": [
          [74.0546207396482, 30.4382853694864],
-         [74.0596207396482, 30.4382853694864], 
+         [74.0596207396482, 30.4382853694864],
          [74.0596207396482, 30.4432853694864],
          [74.0546207396482, 30.4432853694864],
          [74.0546207396482, 30.4382853694864]
@@ -134,12 +142,14 @@ Once deployed, test your endpoints:
 ### Common Issues:
 
 1. **FastAPI + Gunicorn Compatibility Error**:
+
    - **Error**: `FastAPI.__call__() missing 1 required positional argument: 'send'`
    - **Cause**: Gunicorn uses WSGI by default, but FastAPI needs ASGI
    - **Solution**: Updated Procfile to use uvicorn workers with gunicorn
    - **Fix**: `web: gunicorn app:app -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT`
 
 2. **TensorFlow Model Loading Error**:
+
    - **Error**: `Unrecognized keyword arguments: ['batch_shape']`
    - **Cause**: Version mismatch between model (TF 2.13) and runtime (TF 2.15+)
    - **Solution**: Use exact TensorFlow version (2.13.0) that matches the model
@@ -151,39 +161,45 @@ Once deployed, test your endpoints:
 ### Common Issues:
 
 1. **FastAPI + Gunicorn Compatibility Error**:
+
    - **Error**: `FastAPI.__call__() missing 1 required positional argument: 'send'`
    - **Cause**: FastAPI needs ASGI workers, not WSGI workers
    - **Solution**: Updated Procfile and render.yaml to use `uvicorn.workers.UvicornWorker`
 
 2. **Scikit-learn Version Mismatch**:
+
    - **Error**: `InconsistentVersionWarning: Trying to unpickle estimator StandardScaler from version 1.2.2 when using version 1.7.2`
    - **Cause**: Model files were saved with older scikit-learn version
    - **Solution**: Pinned scikit-learn==1.2.2 in requirements.txt
 
 3. **Python Version Compatibility Error**:
+
    - **Error**: `Cannot import 'setuptools.build_meta'` or similar build errors
    - **Cause**: Render defaults to Python 3.13, but some packages aren't compatible
    - **Solution**: The deployment is configured to use Python 3.11.9 via:
-     - `PYTHON_VERSION=3.11.9` in render.yaml 
+     - `PYTHON_VERSION=3.11.9` in render.yaml
      - `.python-version` file specifying 3.11.9
      - Updated requirements.txt with compatible versions
 
-5. **Package Version Not Found**:
+4. **Package Version Not Found**:
+
    - **Error**: `Could not find a version that satisfies the requirement earthengine-api==X.X.X`
    - **Cause**: Package version specified doesn't exist
    - **Solution**: Updated to use latest stable version (1.6.12)
 
-3. **GEE Authentication Failed**:
+5. **GEE Authentication Failed**:
+
    - Check that all environment variables are set correctly
    - Verify private key format (include BEGIN/END lines)
    - Ensure no extra spaces or newlines
 
-4. **Build Fails**:
+6. **Build Fails**:
+
    - Check requirements.txt format
    - Ensure all dependencies are compatible with Python 3.11
    - Check build logs in Render dashboard
 
-5. **App Crashes**:
+7. **App Crashes**:
    - Check application logs in Render
    - Verify model.h5 and scaler.save files are included
    - Test locally first
