@@ -1,5 +1,6 @@
 # app.py
 
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 import numpy as np
@@ -18,6 +19,15 @@ app = FastAPI(
     title="Crop Yield Prediction API",
     description="AI-powered crop yield prediction with satellite imagery and soil sensor data",
     version="1.0.0"
+)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[""],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=[""],  # Allows all methods including OPTIONS
+    allow_headers=["*"],  # Allows all headers
 )
 
 # --- Load model and scaler with error handling ---
