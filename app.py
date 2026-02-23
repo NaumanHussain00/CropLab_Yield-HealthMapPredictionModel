@@ -1,19 +1,19 @@
 # app.py
 
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
+from typing import List, Tuple, Optional
+from datetime import datetime
 import numpy as np
 import tensorflow as tf
 import joblib
-import tempfile
 import io
 import base64
-import os
-from utils.preprocess import preprocess_input
-from typing import Tuple, Optional
+import logging
 import merged_processor
-from pydantic import BaseModel
+from utils.preprocess import preprocess_input
 
 app = FastAPI(
     title="Crop Yield Prediction API",
@@ -30,10 +30,11 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# --- Load model and scaler with error handling ---
-import logging
+# --- Configure logging ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- Load model and scaler with error handling ---
 
 model = None
 scaler = None
@@ -54,7 +55,6 @@ except Exception as e:
     model_error = str(e)
     logger.error(f"❌ Error loading model: {e}")
     model = None
-    logging.warning(f"Error loading model: {e}")
 
 try:
     scaler = joblib.load("scaler.save")
@@ -63,27 +63,7 @@ except Exception as e:
     scaler_error = str(e)
     logger.error(f"❌ Error loading scaler: {e}")
 
-# Health check endpoint
-@app.get("/")
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for monitoring"""
-    gee_status = merged_processor.initialize_earth_engine()
-    
-    return {
-        "status": "healthy" if model and scaler and gee_status else "unhealthy",
-        "message": "Crop Yield Prediction API is running",
-        "components": {
-            "model": "loaded" if model else f"error: {model_error}",
-            "scaler": "loaded" if scaler else f"error: {scaler_error}",
-            "google_earth_engine": "connected" if gee_status else "disconnected"
-        },
-        "version": "1.0.0"
-    }
-
 # Pydantic models
-from typing import List
-from datetime import datetime
 
 def get_corresponding_date():
     """Fetch corresponding date based on current date"""
@@ -100,18 +80,28 @@ class HeatmapRequest(BaseModel):
     t1: float = 3.0  # Threshold for low yield
     t2: float = 4.5  # Threshold for high yield
 
-@app.get("/health")
-def health():
-    status = {"model_loaded": model is not None, "scaler_loaded": scaler is not None}
-    if model_error:
-        status["model_error"] = model_error
-    if scaler_error:
-        status["scaler_error"] = scaler_error
-    return status
-
+# Health check endpoints
 @app.get("/")
-def root():
-    return {"message": "🌾 Crop Yield API is up! Send coordinates to /predict for yield predictions or /generate_heatmap for visualization."}
+@app.get("/health")
+async def health_check():
+    """Health check and root endpoint for monitoring"""
+    gee_status = merged_processor.initialize_earth_engine()
+    
+    return {
+        "status": "healthy" if model and scaler and gee_status else "unhealthy",
+        "message": "🌾 Crop Yield Prediction API is running",
+        "components": {
+            "model": "loaded" if model else f"error: {model_error}",
+            "scaler": "loaded" if scaler else f"error: {scaler_error}",
+            "google_earth_engine": "connected" if gee_status else "disconnected"
+        },
+        "version": "1.0.0",
+        "endpoints": {
+            "/predict": "Predict crop yield from coordinates",
+            "/generate_heatmap": "Generate color-coded heatmap visualization",
+            "/export_arrays": "Export NDVI and sensor arrays as .npz file"
+        }
+    }
 
 @app.post("/predict")
 async def predict(request: PredictRequest):
@@ -160,9 +150,9 @@ async def predict(request: PredictRequest):
         if ndvi_data is None or sensor_data is None:
             raise HTTPException(status_code=400, detail="Failed to generate NDVI and sensor data from coordinates (returned None)")
 
-    # Keep arrays in-memory (do not save .npy files). Use these arrays directly
-        logging.info(f"Generated NDVI in-memory with shape: {ndvi_data.shape}")
-        logging.info(f"Generated Sensor in-memory with shape: {sensor_data.shape}")
+        # Keep arrays in-memory (do not save .npy files). Use these arrays directly
+        logger.info(f"Generated NDVI in-memory with shape: {ndvi_data.shape}")
+        logger.info(f"Generated Sensor in-memory with shape: {sensor_data.shape}")
 
         # --- Prepare data for prediction ---
         # NDVI preprocessing
@@ -226,7 +216,7 @@ async def predict(request: PredictRequest):
             maxPixels=1e10
         )
         task.start()
-        logging.info(f"Started export to GEE asset: {asset_id}")
+        logger.info(f"Started export to GEE asset: {asset_id}")
 
         return {"predicted_yield": predicted_yield, "gee_asset_id": asset_id, "ndvi_shape": ndvi_data.shape, "sensor_shape": sensor_data.shape}
 
@@ -234,7 +224,7 @@ async def predict(request: PredictRequest):
         raise
     except Exception as e:
         import traceback
-        logging.error(f"Prediction error: {e}\n{traceback.format_exc()}")
+        logger.error(f"Prediction error: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 @app.post("/generate_heatmap")
@@ -312,7 +302,7 @@ async def generate_heatmap(request: HeatmapRequest):
         if expected_features is not None:
             current_channels = sensor_processed.shape[-1]
             if current_channels != expected_features:
-                logging.warning(f"Sensor channels ({current_channels}) != scaler expected ({expected_features}); trimming or padding to match.")
+                logger.warning(f"Sensor channels ({current_channels}) != scaler expected ({expected_features}); trimming or padding to match.")
                 if current_channels > expected_features:
                     # trim extra channels
                     sensor_processed = sensor_processed[..., :expected_features]
@@ -365,10 +355,10 @@ async def generate_heatmap(request: HeatmapRequest):
             # Calculate growth percentage
             growth_percentage = ((predicted_yield - old_yield) / old_yield) * 100 if old_yield > 0 else 0.0
             
-            logging.info(f"District: {district}, Old yield: {old_yield}, Predicted yield: {predicted_yield}, Ratio: {yield_ratio:.2f}, Growth: {growth_percentage:.2f}%")
+            logger.info(f"District: {district}, Old yield: {old_yield}, Predicted yield: {predicted_yield}, Ratio: {yield_ratio:.2f}, Growth: {growth_percentage:.2f}%")
         else:
             final_ndvi_data = ndvi_data
-            logging.warning("Could not get district information, using original NDVI data")
+            logger.warning("Could not get district information, using original NDVI data")
 
         # --- Generate separate heatmap masks ---
         red_mask, yellow_mask, green_mask, pixel_counts = merged_processor.create_separate_yield_masks(
@@ -429,7 +419,7 @@ async def generate_heatmap(request: HeatmapRequest):
         raise
     except Exception as e:
         import traceback
-        logging.error(f"Heatmap generation error: {e}\n{traceback.format_exc()}")
+        logger.error(f"Heatmap generation error: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Heatmap generation failed: {str(e)}")
 
 
@@ -471,5 +461,5 @@ async def export_arrays(request: HeatmapRequest):
         raise
     except Exception as e:
         import traceback
-        logging.error(f"Export arrays error: {e}\n{traceback.format_exc()}")
+        logger.error(f"Export arrays error: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Export arrays failed: {str(e)}")
