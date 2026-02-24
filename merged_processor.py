@@ -489,6 +489,30 @@ def calculate_ndvi(image):
         logger.error(f"Error calculating NDVI: {e}")
         return None
 
+def calculate_ndwi(image):
+    """Calculate NDWI (Normalized Difference Water Index) from Green and NIR bands.
+    Formula: (Green - NIR) / (Green + NIR) using Sentinel-2 B3 and B8."""
+    try:
+        green = image.select('B3')
+        nir = image.select('B8')
+        ndwi = green.subtract(nir).divide(green.add(nir)).rename('NDWI')
+        return ndwi
+    except Exception as e:
+        logger.error(f"Error calculating NDWI: {e}")
+        return None
+
+def calculate_ndre(image):
+    """Calculate NDRE (Normalized Difference Red Edge) from NIR and Red Edge bands.
+    Formula: (NIR - RedEdge) / (NIR + RedEdge) using Sentinel-2 B8 and B5."""
+    try:
+        nir = image.select('B8')
+        red_edge = image.select('B5')
+        ndre = nir.subtract(red_edge).divide(nir.add(red_edge)).rename('NDRE')
+        return ndre
+    except Exception as e:
+        logger.error(f"Error calculating NDRE: {e}")
+        return None
+
 def export_image_data(image, region, scale=10, band_names=None):
     """Export image data as numpy array - from ndvi_heatmap.py"""
     try:
@@ -756,7 +780,7 @@ def generate_ndvi_and_sensor_npy(geojson_feature, date_str="2018-10-01"):
         polygon = create_geometry_from_geojson(geojson_feature)
         if polygon is None:
             logger.error("Failed to create polygon")
-            return None, None
+            return None, None, None
 
         # Parse date and create date range
         try:
@@ -773,25 +797,25 @@ def generate_ndvi_and_sensor_npy(geojson_feature, date_str="2018-10-01"):
         image = search_satellite_image(polygon, start_date, end_date)
         if image is None:
             logger.error("No suitable satellite image found")
-            return None, None
+            return None, None, None
 
         # Generate NDVI data
         logger.info("Calculating NDVI...")
         ndvi_bands = select_ndvi_bands(image)
         if ndvi_bands is None:
             logger.error("Failed to select NDVI bands")
-            return None, None
+            return None, None, None
 
         ndvi_image = calculate_ndvi(ndvi_bands)
         if ndvi_image is None:
             logger.error("Failed to calculate NDVI")
-            return None, None
+            return None, None, None
 
         logger.info("Exporting NDVI data...")
         ndvi_data = export_image_data(ndvi_image, polygon, scale=10, band_names=['NDVI'])
         if ndvi_data is None:
             logger.error("Failed to export NDVI data")
-            return None, None
+            return None, None, None
 
         # Extract NDVI values
         if hasattr(ndvi_data, 'dtype') and ndvi_data.dtype.names is not None:
@@ -812,13 +836,13 @@ def generate_ndvi_and_sensor_npy(geojson_feature, date_str="2018-10-01"):
         sensor_image = get_sensor_data(polygon)
         if sensor_image is None:
             logger.error("Failed to get sensor data")
-            return None, None
+            return None, None, None
 
         logger.info("Exporting sensor data...")
         sensor_data = export_sensor_data(sensor_image, polygon, scale=10)
         if sensor_data is None:
             logger.error("Failed to export sensor data")
-            return None, None
+            return None, None, None
 
         # Prepare sensor data as 3D array (full size, no crop)
         if hasattr(sensor_data, 'dtype') and sensor_data.dtype.names is not None:
@@ -838,11 +862,11 @@ def generate_ndvi_and_sensor_npy(geojson_feature, date_str="2018-10-01"):
         logger.info(f"✅ Successfully generated NDVI data with shape: {ndvi_values.shape}")
         logger.info(f"✅ Successfully generated sensor data with shape: {sensor_3d.shape}")
 
-        return ndvi_values, sensor_3d
+        return ndvi_values, sensor_3d, image
 
     except Exception as e:
         logger.error(f"Error generating NDVI and Sensor data: {e}")
-        return None, None
+        return None, None, None
 
 def create_yield_heatmap_overlay(ndvi_data, predicted_yield, t1=30, t2=50):
     """

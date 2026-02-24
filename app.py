@@ -140,7 +140,7 @@ async def predict(request: PredictRequest):
             }
         }
         try:
-            ndvi_data, sensor_data = merged_processor.generate_ndvi_and_sensor_npy(
+            ndvi_data, sensor_data, _ = merged_processor.generate_ndvi_and_sensor_npy(
                 geojson_dict, date_str
             )
         except Exception as e:
@@ -265,7 +265,7 @@ async def generate_heatmap(request: HeatmapRequest):
         }
         
         # Generate data once without predicted yield
-        ndvi_data, sensor_data = merged_processor.generate_ndvi_and_sensor_npy(
+        ndvi_data, sensor_data, sat_image = merged_processor.generate_ndvi_and_sensor_npy(
             geojson_dict, date_str
         )
 
@@ -393,6 +393,69 @@ async def generate_heatmap(request: HeatmapRequest):
         yellow_base64 = mask_to_base64(yellow_mask)
         green_base64 = mask_to_base64(green_mask)
 
+        # --- Generate NDWI data and masks ---
+        logger.info("Calculating NDWI...")
+        ndwi_image = merged_processor.calculate_ndwi(sat_image)
+        if ndwi_image is not None:
+            ndwi_data_raw = merged_processor.export_image_data(ndwi_image, merged_processor.create_geometry_from_geojson(geojson_dict), scale=10, band_names=['NDWI'])
+            if ndwi_data_raw is not None:
+                # Extract NDWI values
+                if hasattr(ndwi_data_raw, 'dtype') and ndwi_data_raw.dtype.names is not None:
+                    ndwi_values = ndwi_data_raw['NDWI'] if 'NDWI' in ndwi_data_raw.dtype.names else ndwi_data_raw[ndwi_data_raw.dtype.names[0]]
+                else:
+                    ndwi_values = ndwi_data_raw
+                ndwi_values = ndwi_values.astype(np.float32)
+                # Apply yield adjustment
+                final_ndwi_data, _ = merged_processor.compare_yields_and_adjust_ndvi(ndwi_values, predicted_yield, old_yield)
+                # Generate masks
+                ndwi_red_mask, ndwi_yellow_mask, ndwi_green_mask, ndwi_pixel_counts = merged_processor.create_separate_yield_masks(
+                    final_ndwi_data, predicted_yield, request.t1, request.t2
+                )
+            else:
+                ndwi_red_mask = ndwi_yellow_mask = ndwi_green_mask = None
+        else:
+            ndwi_red_mask = ndwi_yellow_mask = ndwi_green_mask = None
+
+        # --- Generate NDRE data and masks ---
+        logger.info("Calculating NDRE...")
+        ndre_image = merged_processor.calculate_ndre(sat_image)
+        if ndre_image is not None:
+            ndre_data_raw = merged_processor.export_image_data(ndre_image, merged_processor.create_geometry_from_geojson(geojson_dict), scale=10, band_names=['NDRE'])
+            if ndre_data_raw is not None:
+                # Extract NDRE values
+                if hasattr(ndre_data_raw, 'dtype') and ndre_data_raw.dtype.names is not None:
+                    ndre_values = ndre_data_raw['NDRE'] if 'NDRE' in ndre_data_raw.dtype.names else ndre_data_raw[ndre_data_raw.dtype.names[0]]
+                else:
+                    ndre_values = ndre_data_raw
+                ndre_values = ndre_values.astype(np.float32)
+                # Apply yield adjustment
+                final_ndre_data, _ = merged_processor.compare_yields_and_adjust_ndvi(ndre_values, predicted_yield, old_yield)
+                # Generate masks
+                ndre_red_mask, ndre_yellow_mask, ndre_green_mask, ndre_pixel_counts = merged_processor.create_separate_yield_masks(
+                    final_ndre_data, predicted_yield, request.t1, request.t2
+                )
+            else:
+                ndre_red_mask = ndre_yellow_mask = ndre_green_mask = None
+        else:
+            ndre_red_mask = ndre_yellow_mask = ndre_green_mask = None
+
+        # --- Convert NDWI and NDRE masks to base64 ---
+        ndwi_masks_response = {}
+        if ndwi_red_mask is not None and ndwi_yellow_mask is not None and ndwi_green_mask is not None:
+            ndwi_masks_response = {
+                "red_mask_base64": mask_to_base64(ndwi_red_mask),
+                "yellow_mask_base64": mask_to_base64(ndwi_yellow_mask),
+                "green_mask_base64": mask_to_base64(ndwi_green_mask)
+            }
+
+        ndre_masks_response = {}
+        if ndre_red_mask is not None and ndre_yellow_mask is not None and ndre_green_mask is not None:
+            ndre_masks_response = {
+                "red_mask_base64": mask_to_base64(ndre_red_mask),
+                "yellow_mask_base64": mask_to_base64(ndre_yellow_mask),
+                "green_mask_base64": mask_to_base64(ndre_green_mask)
+            }
+
         response = {
             "predicted_yield": predicted_yield,
             "old_yield": old_yield,
@@ -408,6 +471,8 @@ async def generate_heatmap(request: HeatmapRequest):
                 "yellow_mask_base64": yellow_base64,
                 "green_mask_base64": green_base64
             },
+            "ndwi-masks": ndwi_masks_response,
+            "ndre-masks": ndre_masks_response,
             "pixel_counts": pixel_counts,
             "thresholds": {"t1": request.t1, "t2": request.t2},
             "suggestions": suggestions
@@ -444,7 +509,7 @@ async def export_arrays(request: HeatmapRequest):
             }
         }
 
-        ndvi_data, sensor_data = merged_processor.generate_ndvi_and_sensor_npy(geojson_dict, date_str)
+        ndvi_data, sensor_data, _ = merged_processor.generate_ndvi_and_sensor_npy(geojson_dict, date_str)
 
         if ndvi_data is None or sensor_data is None:
             raise HTTPException(status_code=400, detail="Failed to generate arrays from coordinates")
