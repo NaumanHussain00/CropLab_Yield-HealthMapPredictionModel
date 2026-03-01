@@ -396,6 +396,7 @@ async def generate_heatmap(request: HeatmapRequest):
         # --- Generate NDWI data and masks ---
         logger.info("Calculating NDWI...")
         ndwi_image = merged_processor.calculate_ndwi(sat_image)
+        ndwi_brown_mask = ndwi_yellow_mask = ndwi_light_blue_mask = ndwi_dark_blue_mask = None
         if ndwi_image is not None:
             ndwi_data_raw = merged_processor.export_image_data(ndwi_image, merged_processor.create_geometry_from_geojson(geojson_dict), scale=10, band_names=['NDWI'])
             if ndwi_data_raw is not None:
@@ -405,20 +406,15 @@ async def generate_heatmap(request: HeatmapRequest):
                 else:
                     ndwi_values = ndwi_data_raw
                 ndwi_values = ndwi_values.astype(np.float32)
-                # Apply yield adjustment
-                final_ndwi_data, _ = merged_processor.compare_yields_and_adjust_ndvi(ndwi_values, predicted_yield, old_yield)
-                # Generate masks
-                ndwi_red_mask, ndwi_yellow_mask, ndwi_green_mask, ndwi_pixel_counts = merged_processor.create_separate_yield_masks(
-                    final_ndwi_data, predicted_yield, request.t1, request.t2
+                # Generate masks: brown -> yellow -> light blue -> dark blue
+                ndwi_brown_mask, ndwi_yellow_mask, ndwi_light_blue_mask, ndwi_dark_blue_mask, ndwi_pixel_counts = merged_processor.create_separate_ndwi_masks(
+                    ndwi_values
                 )
-            else:
-                ndwi_red_mask = ndwi_yellow_mask = ndwi_green_mask = None
-        else:
-            ndwi_red_mask = ndwi_yellow_mask = ndwi_green_mask = None
 
         # --- Generate NDRE data and masks ---
         logger.info("Calculating NDRE...")
         ndre_image = merged_processor.calculate_ndre(sat_image)
+        ndre_purple_mask = ndre_pink_mask = ndre_light_green_mask = ndre_dark_green_mask = None
         if ndre_image is not None:
             ndre_data_raw = merged_processor.export_image_data(ndre_image, merged_processor.create_geometry_from_geojson(geojson_dict), scale=10, band_names=['NDRE'])
             if ndre_data_raw is not None:
@@ -428,32 +424,28 @@ async def generate_heatmap(request: HeatmapRequest):
                 else:
                     ndre_values = ndre_data_raw
                 ndre_values = ndre_values.astype(np.float32)
-                # Apply yield adjustment
-                final_ndre_data, _ = merged_processor.compare_yields_and_adjust_ndvi(ndre_values, predicted_yield, old_yield)
-                # Generate masks
-                ndre_red_mask, ndre_yellow_mask, ndre_green_mask, ndre_pixel_counts = merged_processor.create_separate_yield_masks(
-                    final_ndre_data, predicted_yield, request.t1, request.t2
+                # Generate masks: purple -> pink -> light green -> dark green
+                ndre_purple_mask, ndre_pink_mask, ndre_light_green_mask, ndre_dark_green_mask, ndre_pixel_counts = merged_processor.create_separate_ndre_masks(
+                    ndre_values
                 )
-            else:
-                ndre_red_mask = ndre_yellow_mask = ndre_green_mask = None
-        else:
-            ndre_red_mask = ndre_yellow_mask = ndre_green_mask = None
 
         # --- Convert NDWI and NDRE masks to base64 ---
         ndwi_masks_response = {}
-        if ndwi_red_mask is not None and ndwi_yellow_mask is not None and ndwi_green_mask is not None:
+        if ndwi_brown_mask is not None:
             ndwi_masks_response = {
-                "red_mask_base64": mask_to_base64(ndwi_red_mask),
+                "brown_mask_base64": mask_to_base64(ndwi_brown_mask),
                 "yellow_mask_base64": mask_to_base64(ndwi_yellow_mask),
-                "green_mask_base64": mask_to_base64(ndwi_green_mask)
+                "light_blue_mask_base64": mask_to_base64(ndwi_light_blue_mask),
+                "dark_blue_mask_base64": mask_to_base64(ndwi_dark_blue_mask)
             }
 
         ndre_masks_response = {}
-        if ndre_red_mask is not None and ndre_yellow_mask is not None and ndre_green_mask is not None:
+        if ndre_purple_mask is not None:
             ndre_masks_response = {
-                "red_mask_base64": mask_to_base64(ndre_red_mask),
-                "yellow_mask_base64": mask_to_base64(ndre_yellow_mask),
-                "green_mask_base64": mask_to_base64(ndre_green_mask)
+                "purple_mask_base64": mask_to_base64(ndre_purple_mask),
+                "pink_mask_base64": mask_to_base64(ndre_pink_mask),
+                "light_green_mask_base64": mask_to_base64(ndre_light_green_mask),
+                "dark_green_mask_base64": mask_to_base64(ndre_dark_green_mask)
             }
 
         response = {

@@ -1008,6 +1008,162 @@ def create_separate_yield_masks(ndvi_data, predicted_yield, t1=30, t2=50):
         logger.error(f"Error creating separate yield masks: {e}")
         return None, None, None, None
 
+def create_separate_ndwi_masks(ndwi_data):
+    """
+    Create 4 separate NDWI masks (brown, yellow, light blue, dark blue) based on NDWI thresholds.
+    NDWI ranges from -1 to 1.
+    
+    Args:
+        ndwi_data: 2D NDWI array
+    
+    Returns:
+        Tuple of (brown_mask, yellow_mask, light_blue_mask, dark_blue_mask, pixel_counts)
+        Each mask is an RGBA numpy array
+    """
+    try:
+        nd = np.array(ndwi_data, dtype=float)
+        if nd.ndim == 3 and nd.shape[2] == 1:
+            nd = nd[..., 0]
+        if nd.ndim != 2:
+            nd = np.squeeze(nd)
+        h, w = nd.shape
+        
+        # Create 4 separate RGBA masks
+        brown_mask = np.zeros((h, w, 4), dtype=np.uint8)
+        yellow_mask = np.zeros((h, w, 4), dtype=np.uint8)
+        light_blue_mask = np.zeros((h, w, 4), dtype=np.uint8)
+        dark_blue_mask = np.zeros((h, w, 4), dtype=np.uint8)
+        
+        valid_mask = np.isfinite(nd)
+        if not np.any(valid_mask):
+            return brown_mask, yellow_mask, light_blue_mask, dark_blue_mask, {"valid": 0, "brown": 0, "yellow": 0, "light_blue": 0, "dark_blue": 0}
+        
+        # NDWI thresholds for -1 to 1 range
+        brown_pixels = valid_mask & (nd < -0.3)       # Very low water
+        yellow_pixels = valid_mask & (nd >= -0.3) & (nd < 0)  # Low water
+        light_blue_pixels = valid_mask & (nd >= 0) & (nd < 0.3)  # Moderate water
+        dark_blue_pixels = valid_mask & (nd >= 0.3)   # High water
+        
+        alpha_val = 180
+        
+        # Brown: RGB(139, 69, 19)
+        brown_mask[brown_pixels, 0] = 139
+        brown_mask[brown_pixels, 1] = 69
+        brown_mask[brown_pixels, 2] = 19
+        brown_mask[brown_pixels, 3] = alpha_val
+        
+        # Yellow: RGB(255, 255, 0)
+        yellow_mask[yellow_pixels, 0] = 255
+        yellow_mask[yellow_pixels, 1] = 255
+        yellow_mask[yellow_pixels, 2] = 0
+        yellow_mask[yellow_pixels, 3] = alpha_val
+        
+        # Light blue: RGB(135, 206, 250)
+        light_blue_mask[light_blue_pixels, 0] = 135
+        light_blue_mask[light_blue_pixels, 1] = 206
+        light_blue_mask[light_blue_pixels, 2] = 250
+        light_blue_mask[light_blue_pixels, 3] = alpha_val
+        
+        # Dark blue: RGB(0, 0, 139)
+        dark_blue_mask[dark_blue_pixels, 0] = 0
+        dark_blue_mask[dark_blue_pixels, 1] = 0
+        dark_blue_mask[dark_blue_pixels, 2] = 139
+        dark_blue_mask[dark_blue_pixels, 3] = alpha_val
+        
+        pixel_counts = {
+            "valid": int(np.sum(valid_mask)),
+            "brown": int(np.sum(brown_pixels)),
+            "yellow": int(np.sum(yellow_pixels)),
+            "light_blue": int(np.sum(light_blue_pixels)),
+            "dark_blue": int(np.sum(dark_blue_pixels))
+        }
+        
+        logger.info(f"NDWI pixel counts: {pixel_counts}")
+        
+        return brown_mask, yellow_mask, light_blue_mask, dark_blue_mask, pixel_counts
+        
+    except Exception as e:
+        logger.error(f"Error creating NDWI masks: {e}")
+        return None, None, None, None, {}
+
+def create_separate_ndre_masks(ndre_data):
+    """
+    Create 4 separate NDRE masks (purple, pink, light green, dark green) based on NDRE thresholds.
+    NDRE ranges from -1 to 1.
+    
+    Args:
+        ndre_data: 2D NDRE array
+    
+    Returns:
+        Tuple of (purple_mask, pink_mask, light_green_mask, dark_green_mask, pixel_counts)
+        Each mask is an RGBA numpy array
+    """
+    try:
+        nd = np.array(ndre_data, dtype=float)
+        if nd.ndim == 3 and nd.shape[2] == 1:
+            nd = nd[..., 0]
+        if nd.ndim != 2:
+            nd = np.squeeze(nd)
+        h, w = nd.shape
+        
+        # Create 4 separate RGBA masks
+        purple_mask = np.zeros((h, w, 4), dtype=np.uint8)
+        pink_mask = np.zeros((h, w, 4), dtype=np.uint8)
+        light_green_mask = np.zeros((h, w, 4), dtype=np.uint8)
+        dark_green_mask = np.zeros((h, w, 4), dtype=np.uint8)
+        
+        valid_mask = np.isfinite(nd)
+        if not np.any(valid_mask):
+            return purple_mask, pink_mask, light_green_mask, dark_green_mask, {"valid": 0, "purple": 0, "pink": 0, "light_green": 0, "dark_green": 0}
+        
+        # NDRE thresholds for -1 to 1 range
+        purple_pixels = valid_mask & (nd < -0.2)      # Stressed vegetation
+        pink_pixels = valid_mask & (nd >= -0.2) & (nd < 0.1)  # Moderate stress
+        light_green_pixels = valid_mask & (nd >= 0.1) & (nd < 0.4)  # Healthy
+        dark_green_pixels = valid_mask & (nd >= 0.4)  # Very healthy
+        
+        alpha_val = 180
+        
+        # Purple: RGB(128, 0, 128)
+        purple_mask[purple_pixels, 0] = 128
+        purple_mask[purple_pixels, 1] = 0
+        purple_mask[purple_pixels, 2] = 128
+        purple_mask[purple_pixels, 3] = alpha_val
+        
+        # Pink: RGB(255, 105, 180)
+        pink_mask[pink_pixels, 0] = 255
+        pink_mask[pink_pixels, 1] = 105
+        pink_mask[pink_pixels, 2] = 180
+        pink_mask[pink_pixels, 3] = alpha_val
+        
+        # Light green: RGB(144, 238, 144)
+        light_green_mask[light_green_pixels, 0] = 144
+        light_green_mask[light_green_pixels, 1] = 238
+        light_green_mask[light_green_pixels, 2] = 144
+        light_green_mask[light_green_pixels, 3] = alpha_val
+        
+        # Dark green: RGB(0, 100, 0)
+        dark_green_mask[dark_green_pixels, 0] = 0
+        dark_green_mask[dark_green_pixels, 1] = 100
+        dark_green_mask[dark_green_pixels, 2] = 0
+        dark_green_mask[dark_green_pixels, 3] = alpha_val
+        
+        pixel_counts = {
+            "valid": int(np.sum(valid_mask)),
+            "purple": int(np.sum(purple_pixels)),
+            "pink": int(np.sum(pink_pixels)),
+            "light_green": int(np.sum(light_green_pixels)),
+            "dark_green": int(np.sum(dark_green_pixels))
+        }
+        
+        logger.info(f"NDRE pixel counts: {pixel_counts}")
+        
+        return purple_mask, pink_mask, light_green_mask, dark_green_mask, pixel_counts
+        
+    except Exception as e:
+        logger.error(f"Error creating NDRE masks: {e}")
+        return None, None, None, None, {}
+
 def generate_farmer_suggestions(predicted_yield, old_yield, pixel_counts, sensor_data, location_info, thresholds):
     """
     Generate simple and easy-to-understand farming suggestions
