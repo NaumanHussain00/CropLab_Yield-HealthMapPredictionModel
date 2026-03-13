@@ -368,6 +368,18 @@ async def generate_heatmap(request: HeatmapRequest):
         if red_mask is None or yellow_mask is None or green_mask is None:
             raise HTTPException(status_code=500, detail="Failed to generate heatmap masks")
 
+        # --- Apply pixel-based multiplier to yields ---
+        green_pixels = pixel_counts.get("green", 0)
+        yellow_pixels = pixel_counts.get("yellow", 0)
+        red_pixels = pixel_counts.get("red", 0)
+        total_pixels = green_pixels + yellow_pixels + red_pixels
+        multiplier =(green_pixels + 0.5 * yellow_pixels) / total_pixels
+        
+        old_yield = old_yield * multiplier
+        predicted_yield = predicted_yield * multiplier
+        
+        logger.info(f"Applied multiplier: {multiplier:.4f} (green={green_pixels}, yellow={yellow_pixels})")
+
         # --- Generate farmer suggestions ---
         suggestions = merged_processor.generate_farmer_suggestions(
             predicted_yield=predicted_yield,
