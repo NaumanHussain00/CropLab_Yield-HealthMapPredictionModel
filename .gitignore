@@ -1,10 +1,10 @@
 # Environment variables
 .env
 .env.local
-
+.env.example
 # Service account file (don't commit to git)
 earth-engine-service-account.json
-
+.venv
 # Python
 __pycache__/
 *.py[cod]
