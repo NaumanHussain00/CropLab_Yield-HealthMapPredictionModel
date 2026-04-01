@@ -404,8 +404,9 @@ async def generate_heatmap(request: HeatmapRequest):
         green_pixels = pixel_counts.get("green", 0)
         yellow_pixels = pixel_counts.get("yellow", 0)
         red_pixels = pixel_counts.get("red", 0)
-        total_pixels = green_pixels + yellow_pixels + red_pixels
-        multiplier =(green_pixels + 0.5 * yellow_pixels) / total_pixels
+        valid_pixels = pixel_counts.get("valid", green_pixels + yellow_pixels + red_pixels)
+        total_pixels = valid_pixels if valid_pixels > 0 else (green_pixels + yellow_pixels + red_pixels)
+        multiplier = (green_pixels + 0.5 * yellow_pixels) / total_pixels if total_pixels > 0 else 0
         
         old_yield = old_yield * multiplier
         predicted_yield = predicted_yield * multiplier
@@ -440,7 +441,7 @@ async def generate_heatmap(request: HeatmapRequest):
         # --- Generate NDWI data and masks ---
         logger.info("Calculating NDWI...")
         ndwi_image = merged_processor.calculate_ndwi(sat_image)
-        ndwi_brown_mask = ndwi_yellow_mask = ndwi_light_blue_mask = ndwi_dark_blue_mask = None
+        ndwi_brown_mask = ndwi_yellow_mask = ndwi_light_blue_mask = None
         if ndwi_image is not None:
             ndwi_data_raw = merged_processor.export_image_data(ndwi_image, merged_processor.create_geometry_from_geojson(geojson_dict), scale=10, band_names=['NDWI'])
             if ndwi_data_raw is not None:
@@ -450,8 +451,8 @@ async def generate_heatmap(request: HeatmapRequest):
                 else:
                     ndwi_values = ndwi_data_raw
                 ndwi_values = ndwi_values.astype(np.float32)
-                # Generate masks: brown -> yellow -> light blue -> dark blue
-                ndwi_brown_mask, ndwi_yellow_mask, ndwi_light_blue_mask, ndwi_dark_blue_mask, ndwi_pixel_counts = merged_processor.create_separate_ndwi_masks(
+                # Generate masks: brown -> yellow -> light blue
+                ndwi_brown_mask, ndwi_yellow_mask, ndwi_light_blue_mask, ndwi_pixel_counts = merged_processor.create_separate_ndwi_masks(
                     ndwi_values
                 )
 
@@ -479,8 +480,7 @@ async def generate_heatmap(request: HeatmapRequest):
             ndwi_masks_response = {
                 "brown_mask_base64": mask_to_base64(ndwi_brown_mask),
                 "yellow_mask_base64": mask_to_base64(ndwi_yellow_mask),
-                "light_blue_mask_base64": mask_to_base64(ndwi_light_blue_mask),
-                "dark_blue_mask_base64": mask_to_base64(ndwi_dark_blue_mask)
+                "light_blue_mask_base64": mask_to_base64(ndwi_light_blue_mask)
             }
 
         ndre_masks_response = {}

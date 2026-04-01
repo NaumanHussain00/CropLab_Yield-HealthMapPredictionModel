@@ -909,10 +909,10 @@ def create_separate_yield_masks(ndvi_data, predicted_yield, t1=30, t2=50):
     Each mask contains only one color, with other areas transparent.
 
     Args:
-        ndvi_data: 2D NDVI array
-        predicted_yield: Predicted yield value (float)
-        t1: Threshold 1 for low yield (default: 30)
-        t2: Threshold 2 for high yield (default: 50)
+        ndvi_data: 2D NDVI array (values typically 0.0 to 1.0)
+        predicted_yield: Predicted yield value (float) - used for scaling
+        t1: Threshold 1 for low yield (default: 30) - converts to NDVI threshold
+        t2: Threshold 2 for high yield (default: 50) - converts to NDVI threshold
 
     Returns:
         Tuple of (red_mask, yellow_mask, green_mask, pixel_counts)
@@ -937,14 +937,42 @@ def create_separate_yield_masks(ndvi_data, predicted_yield, t1=30, t2=50):
         if not np.any(valid_mask):
             return red_mask, yellow_mask, green_mask, {"valid": 0, "red": 0, "yellow": 0, "green": 0}
 
-        # Apply thresholds to classify pixels
-        v1 = t1
-        v2 = t2
+        # Convert yield thresholds to NDVI-based thresholds
+        # Proper NDVI classification for agricultural monitoring:
+        # < 0.1   → transparent (water, clouds, built-up, roads)
+        # 0.1-0.2 → transparent (bare soil, dry land — not crop)
+        # 0.2-0.4 → RED (sparse / stressed vegetation)
+        # 0.4-0.6 → YELLOW (moderate vegetation)
+        # 0.6-0.8 → GREEN (healthy crop)
+        # > 0.8   → transparent (dense forest / non-crop vegetation)
         
-        # Classify pixels based on NDVI values
-        low_mask = valid_mask & (nd < v1)    # Red: low NDVI
-        mid_mask = valid_mask & (nd >= v1) & (nd < v2)  # Yellow: medium NDVI
-        high_mask = valid_mask & (nd >= v2)  # Green: high NDVI
+        ndvi_threshold_bare_low = 0.1      # Exclude non-vegetation (water, clouds, built-up)
+        ndvi_threshold_bare_high = 0.2     # Exclude bare soil, dry land
+        ndvi_threshold_red_low = 0.2       # Start of sparse crops → RED
+        ndvi_threshold_red_high = 0.4      # Start of moderate crops → YELLOW
+        ndvi_threshold_yellow_high = 0.6   # Start of healthy crops → GREEN
+        ndvi_threshold_strong = 0.9        # Exclude dense forest
+        
+        # Log actual NDVI statistics
+        valid_ndvi = nd[valid_mask]
+        logger.info(f"NDVI statistics - min: {np.min(valid_ndvi):.4f}, max: {np.max(valid_ndvi):.4f}, mean: {np.mean(valid_ndvi):.4f}, median: {np.median(valid_ndvi):.4f}")
+        logger.info(f"NDVI thresholds Applied:")
+        logger.info(f"  < 0.1: transparent (water/clouds/buildings)")
+        logger.info(f"  0.1-0.2: transparent (bare soil)")
+        logger.info(f"  0.2-0.4: RED (sparse/stressed)")
+        logger.info(f"  0.4-0.6: YELLOW (moderate)")
+        logger.info(f"  0.6-0.8: GREEN (healthy)")
+        logger.info(f"  > 0.8: transparent (dense forest)")
+        
+        # Classify pixels with proper ranges
+        # RED: 0.2 <= NDVI < 0.4
+        low_mask = valid_mask & (nd >= ndvi_threshold_red_low) & (nd < ndvi_threshold_red_high)
+        
+        # YELLOW: 0.4 <= NDVI < 0.6
+        mid_mask = valid_mask & (nd >= ndvi_threshold_red_high) & (nd < ndvi_threshold_yellow_high)
+        
+        # GREEN: 0.6 <= NDVI <= 0.9
+        high_mask = valid_mask & (nd >= ndvi_threshold_yellow_high) & (nd <= ndvi_threshold_strong)
         
         alpha_val = 255  # Full opacity for visible pixels
         
@@ -971,15 +999,17 @@ def create_separate_yield_masks(ndvi_data, predicted_yield, t1=30, t2=50):
         red_pixels = int(np.sum(low_mask))
         yellow_pixels = int(np.sum(mid_mask))
         green_pixels = int(np.sum(high_mask))
+        transparent_pixels = valid_pixels - red_pixels - yellow_pixels - green_pixels
         
         pixel_counts = {
             "valid": valid_pixels,
+            "transparent": transparent_pixels,
             "red": red_pixels,
             "yellow": yellow_pixels,
             "green": green_pixels
         }
         
-        logger.info(f"Created separate masks - Red: {red_pixels}, Yellow: {yellow_pixels}, Green: {green_pixels}, Valid: {valid_pixels}")
+        logger.info(f"Pixel classification - Red: {red_pixels} ({100*red_pixels/valid_pixels:.1f}%), Yellow: {yellow_pixels} ({100*yellow_pixels/valid_pixels:.1f}%), Green: {green_pixels} ({100*green_pixels/valid_pixels:.1f}%)")
         
         return red_mask, yellow_mask, green_mask, pixel_counts
         
@@ -989,14 +1019,14 @@ def create_separate_yield_masks(ndvi_data, predicted_yield, t1=30, t2=50):
 
 def create_separate_ndwi_masks(ndwi_data):
     """
-    Create 4 separate NDWI masks (brown, yellow, light blue, dark blue) based on NDWI thresholds.
-    NDWI ranges from -1 to 1.
+    Create 3 separate NDWI masks (brown, yellow, light blue) based on NDWI thresholds for water/hydration.
+    NDWI ranges from -1 to 1. Transparency applied to non-agricultural regions.
     
     Args:
         ndwi_data: 2D NDWI array
     
     Returns:
-        Tuple of (brown_mask, yellow_mask, light_blue_mask, dark_blue_mask, pixel_counts)
+        Tuple of (brown_mask, yellow_mask, light_blue_mask, pixel_counts)
         Each mask is an RGBA numpy array
     """
     try:
@@ -1007,23 +1037,27 @@ def create_separate_ndwi_masks(ndwi_data):
             nd = np.squeeze(nd)
         h, w = nd.shape
         
-        # Create 4 separate RGBA masks
+        # Create 3 separate RGBA masks (transparency for non-agricultural areas)
         brown_mask = np.zeros((h, w, 4), dtype=np.uint8)
         yellow_mask = np.zeros((h, w, 4), dtype=np.uint8)
         light_blue_mask = np.zeros((h, w, 4), dtype=np.uint8)
-        dark_blue_mask = np.zeros((h, w, 4), dtype=np.uint8)
         
         valid_mask = np.isfinite(nd)
         if not np.any(valid_mask):
-            return brown_mask, yellow_mask, light_blue_mask, dark_blue_mask, {"valid": 0, "brown": 0, "yellow": 0, "light_blue": 0, "dark_blue": 0}
+            return brown_mask, yellow_mask, light_blue_mask, {"valid": 0, "brown": 0, "yellow": 0, "light_blue": 0}
         
-        # NDWI thresholds for -1 to 1 range
-        brown_pixels = valid_mask & (nd < -0.3)       # Very low water
-        yellow_pixels = valid_mask & (nd >= -0.3) & (nd < 0)  # Low water
-        light_blue_pixels = valid_mask & (nd >= 0) & (nd < 0.3)  # Moderate water
-        dark_blue_pixels = valid_mask & (nd >= 0.3)   # High water
+        # NDWI thresholds for agricultural water/hydration monitoring:
+        # < -0.3       → transparent (built-up, dry soil, non-agricultural)
+        # -0.3 to 0.0  → brown (very low water, dry fields)
+        # 0.0 to 0.2   → yellow (low water)
+        # 0.2 to 0.4   → light blue (moderate water, good hydration)
+        # > 0.4        → transparent (water bodies, irrigation sources — non-crop areas)
         
-        alpha_val = 180
+        brown_pixels = valid_mask & (nd >= -0.3) & (nd < 0.0)     # Very low water
+        yellow_pixels = valid_mask & (nd >= 0.0) & (nd < 0.2)     # Low water
+        light_blue_pixels = valid_mask & (nd >= 0.2) & (nd < 0.4) # Moderate water
+        
+        alpha_val = 255  # Full opacity for visible pixels
         
         # Brown: RGB(139, 69, 19)
         brown_mask[brown_pixels, 0] = 139
@@ -1043,32 +1077,42 @@ def create_separate_ndwi_masks(ndwi_data):
         light_blue_mask[light_blue_pixels, 2] = 250
         light_blue_mask[light_blue_pixels, 3] = alpha_val
         
-        # Dark blue: RGB(0, 0, 139)
-        dark_blue_mask[dark_blue_pixels, 0] = 0
-        dark_blue_mask[dark_blue_pixels, 1] = 0
-        dark_blue_mask[dark_blue_pixels, 2] = 139
-        dark_blue_mask[dark_blue_pixels, 3] = alpha_val
+        # Calculate pixel counts
+        valid_pixels = int(np.sum(valid_mask))
+        brown_count = int(np.sum(brown_pixels))
+        yellow_count = int(np.sum(yellow_pixels))
+        light_blue_count = int(np.sum(light_blue_pixels))
+        transparent_count = valid_pixels - brown_count - yellow_count - light_blue_count
         
         pixel_counts = {
-            "valid": int(np.sum(valid_mask)),
-            "brown": int(np.sum(brown_pixels)),
-            "yellow": int(np.sum(yellow_pixels)),
-            "light_blue": int(np.sum(light_blue_pixels)),
-            "dark_blue": int(np.sum(dark_blue_pixels))
+            "valid": valid_pixels,
+            "transparent": transparent_count,
+            "brown": brown_count,
+            "yellow": yellow_count,
+            "light_blue": light_blue_count
         }
         
-        logger.info(f"NDWI pixel counts: {pixel_counts}")
+        # Log NDWI statistics and classification
+        valid_ndwi = nd[valid_mask]
+        logger.info(f"NDWI statistics - min: {np.min(valid_ndwi):.4f}, max: {np.max(valid_ndwi):.4f}, mean: {np.mean(valid_ndwi):.4f}, median: {np.median(valid_ndwi):.4f}")
+        logger.info(f"NDWI thresholds applied:")
+        logger.info(f"  < -0.3: transparent (built-up/dry)")
+        logger.info(f"  -0.3-0.0: BROWN (very low water)")
+        logger.info(f"  0.0-0.2: YELLOW (low water)")
+        logger.info(f"  0.2-0.4: LIGHT BLUE (moderate water)")
+        logger.info(f"  > 0.4: transparent (water bodies)")
+        logger.info(f"NDWI pixel classification - Brown: {brown_count} ({100*brown_count/valid_pixels:.1f}%), Yellow: {yellow_count} ({100*yellow_count/valid_pixels:.1f}%), Light Blue: {light_blue_count} ({100*light_blue_count/valid_pixels:.1f}%)")
         
-        return brown_mask, yellow_mask, light_blue_mask, dark_blue_mask, pixel_counts
+        return brown_mask, yellow_mask, light_blue_mask, pixel_counts
         
     except Exception as e:
         logger.error(f"Error creating NDWI masks: {e}")
-        return None, None, None, None, {}
+        return None, None, None, {}
 
 def create_separate_ndre_masks(ndre_data):
     """
-    Create 4 separate NDRE masks (purple, pink, light green, dark green) based on NDRE thresholds.
-    NDRE ranges from -1 to 1.
+    Create 5 separate NDRE masks (purple, pink, light green, dark green) based on NDRE thresholds for nutrition/chlorophyll.
+    NDRE ranges from -1 to 1. Transparency applied to non-vegetation areas.
     
     Args:
         ndre_data: 2D NDRE array
@@ -1085,7 +1129,7 @@ def create_separate_ndre_masks(ndre_data):
             nd = np.squeeze(nd)
         h, w = nd.shape
         
-        # Create 4 separate RGBA masks
+        # Create 4 separate RGBA masks (transparency for non-vegetation)
         purple_mask = np.zeros((h, w, 4), dtype=np.uint8)
         pink_mask = np.zeros((h, w, 4), dtype=np.uint8)
         light_green_mask = np.zeros((h, w, 4), dtype=np.uint8)
@@ -1095,13 +1139,19 @@ def create_separate_ndre_masks(ndre_data):
         if not np.any(valid_mask):
             return purple_mask, pink_mask, light_green_mask, dark_green_mask, {"valid": 0, "purple": 0, "pink": 0, "light_green": 0, "dark_green": 0}
         
-        # NDRE thresholds for -1 to 1 range
-        purple_pixels = valid_mask & (nd < -0.2)      # Stressed vegetation
-        pink_pixels = valid_mask & (nd >= -0.2) & (nd < 0.1)  # Moderate stress
-        light_green_pixels = valid_mask & (nd >= 0.1) & (nd < 0.4)  # Healthy
-        dark_green_pixels = valid_mask & (nd >= 0.4)  # Very healthy
+        # NDRE thresholds for agricultural nutrition/chlorophyll monitoring:
+        # < 0.1        → transparent (non-vegetation areas)
+        # 0.1 to 0.2   → purple (stressed vegetation, low chlorophyll)
+        # 0.2 to 0.3   → pink (moderate stress, moderate chlorophyll)
+        # 0.3 to 0.5   → light green (healthy vegetation, good chlorophyll)
+        # > 0.5        → dark green (very healthy vegetation, high chlorophyll)
         
-        alpha_val = 180
+        purple_pixels = valid_mask & (nd >= 0.1) & (nd < 0.2)      # Stressed, low chlorophyll
+        pink_pixels = valid_mask & (nd >= 0.2) & (nd < 0.3)        # Moderate stress
+        light_green_pixels = valid_mask & (nd >= 0.3) & (nd < 0.5) # Healthy
+        dark_green_pixels = valid_mask & (nd >= 0.5)               # Very healthy, high chlorophyll
+        
+        alpha_val = 255  # Full opacity for visible pixels
         
         # Purple: RGB(128, 0, 128)
         purple_mask[purple_pixels, 0] = 128
@@ -1109,10 +1159,10 @@ def create_separate_ndre_masks(ndre_data):
         purple_mask[purple_pixels, 2] = 128
         purple_mask[purple_pixels, 3] = alpha_val
         
-        # Pink: RGB(255, 105, 180)
+        # Pink: RGB(255, 192, 203)
         pink_mask[pink_pixels, 0] = 255
-        pink_mask[pink_pixels, 1] = 105
-        pink_mask[pink_pixels, 2] = 180
+        pink_mask[pink_pixels, 1] = 192
+        pink_mask[pink_pixels, 2] = 203
         pink_mask[pink_pixels, 3] = alpha_val
         
         # Light green: RGB(144, 238, 144)
@@ -1127,15 +1177,33 @@ def create_separate_ndre_masks(ndre_data):
         dark_green_mask[dark_green_pixels, 2] = 0
         dark_green_mask[dark_green_pixels, 3] = alpha_val
         
+        # Calculate pixel counts
+        valid_pixels = int(np.sum(valid_mask))
+        purple_count = int(np.sum(purple_pixels))
+        pink_count = int(np.sum(pink_pixels))
+        light_green_count = int(np.sum(light_green_pixels))
+        dark_green_count = int(np.sum(dark_green_pixels))
+        transparent_count = valid_pixels - purple_count - pink_count - light_green_count - dark_green_count
+        
         pixel_counts = {
-            "valid": int(np.sum(valid_mask)),
-            "purple": int(np.sum(purple_pixels)),
-            "pink": int(np.sum(pink_pixels)),
-            "light_green": int(np.sum(light_green_pixels)),
-            "dark_green": int(np.sum(dark_green_pixels))
+            "valid": valid_pixels,
+            "transparent": transparent_count,
+            "purple": purple_count,
+            "pink": pink_count,
+            "light_green": light_green_count,
+            "dark_green": dark_green_count
         }
         
-        logger.info(f"NDRE pixel counts: {pixel_counts}")
+        # Log NDRE statistics and classification
+        valid_ndre = nd[valid_mask]
+        logger.info(f"NDRE statistics - min: {np.min(valid_ndre):.4f}, max: {np.max(valid_ndre):.4f}, mean: {np.mean(valid_ndre):.4f}, median: {np.median(valid_ndre):.4f}")
+        logger.info(f"NDRE thresholds applied:")
+        logger.info(f"  < 0.1: transparent (non-vegetation)")
+        logger.info(f"  0.1-0.2: PURPLE (stressed, low chlorophyll)")
+        logger.info(f"  0.2-0.3: PINK (moderate stress)")
+        logger.info(f"  0.3-0.5: LIGHT GREEN (healthy)")
+        logger.info(f"  > 0.5: DARK GREEN (very healthy, high chlorophyll)")
+        logger.info(f"NDRE pixel classification - Purple: {purple_count} ({100*purple_count/valid_pixels:.1f}%), Pink: {pink_count} ({100*pink_count/valid_pixels:.1f}%), Light Green: {light_green_count} ({100*light_green_count/valid_pixels:.1f}%), Dark Green: {dark_green_count} ({100*dark_green_count/valid_pixels:.1f}%)")
         
         return purple_mask, pink_mask, light_green_mask, dark_green_mask, pixel_counts
         
