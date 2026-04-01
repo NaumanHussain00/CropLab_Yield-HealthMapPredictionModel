@@ -65,32 +65,33 @@ def get_cache_filename(geometry: list, date_str: str) -> str:
     return safe_key
 
 def get_cached_ndvi(geometry: list, date_str: str) -> Optional[np.ndarray]:
-    """Retrieve cached NDVI raster"""
+    """Retrieve cached NDVI raster (uses same naming as get_cached_index for cross-API caching)"""
     key = get_cache_key(geometry, date_str)
+    indexed_key = f"{key}_NDVI"  # Append _NDVI for consistent naming
     
     # Try Redis first
     if redis_client:
         try:
-            cached = redis_client.get(key)
+            cached = redis_client.get(indexed_key)
             if cached:
-                logger.info(f"✅ Cache hit (Redis): {key}")
+                logger.info(f"✅ Cache hit (Redis): {indexed_key}")
                 return np.frombuffer(cached, dtype=np.float32)
         except Exception as e:
             logger.warning(f"Redis read error: {e}")
     
     # Fall back to file cache
     safe_key = get_cache_filename(geometry, date_str)
-    cache_file = os.path.join(CACHE_DIR, f"{safe_key}.json")
+    cache_file = os.path.join(CACHE_DIR, f"{safe_key}_NDVI.json")  # Append _NDVI to filename
     if os.path.exists(cache_file):
         try:
             with open(cache_file, 'r') as f:
                 data = json.load(f)
                 age = (datetime.now() - datetime.fromisoformat(data['timestamp'])).total_seconds()
                 if age < 1800:  # 30 minutes TTL
-                    logger.info(f"✅ Cache hit (File): {key}")
+                    logger.info(f"✅ Cache hit (File): {indexed_key}")
                     return np.array(data['raster'], dtype=np.float32)
                 else:
-                    logger.info(f"⏰ Cache expired: {key}")
+                    logger.info(f"⏰ Cache expired: {indexed_key}")
                     os.remove(cache_file)
         except Exception as e:
             logger.warning(f"File cache read error: {e}")
@@ -98,15 +99,16 @@ def get_cached_ndvi(geometry: list, date_str: str) -> Optional[np.ndarray]:
     return None
 
 def set_cached_ndvi(geometry: list, date_str: str, raster: np.ndarray) -> None:
-    """Store NDVI raster in cache"""
+    """Store NDVI raster in cache (uses same naming as set_cached_index for cross-API caching)"""
     key = get_cache_key(geometry, date_str)
+    indexed_key = f"{key}_NDVI"  # Append _NDVI for consistent naming
     
     # Try Redis first
     if redis_client:
         try:
             raster_bytes = np.asarray(raster, dtype=np.float32).tobytes()
-            redis_client.setex(key, 1800, raster_bytes)  # 30 min TTL
-            logger.debug(f"Cached to Redis: {key}")
+            redis_client.setex(indexed_key, 1800, raster_bytes)  # 30 min TTL
+            logger.debug(f"Cached to Redis: {indexed_key}")
             return
         except Exception as e:
             logger.warning(f"Redis write error: {e}")
@@ -114,14 +116,14 @@ def set_cached_ndvi(geometry: list, date_str: str, raster: np.ndarray) -> None:
     # Fall back to file cache
     try:
         safe_key = get_cache_filename(geometry, date_str)
-        cache_file = os.path.join(CACHE_DIR, f"{safe_key}.json")
+        cache_file = os.path.join(CACHE_DIR, f"{safe_key}_NDVI.json")  # Append _NDVI to filename
         cache_data = {
             "timestamp": datetime.now().isoformat(),
             "raster": np.asarray(raster, dtype=np.float32).tolist()
         }
         with open(cache_file, 'w') as f:
             json.dump(cache_data, f)
-        logger.debug(f"Cached to file: {key}")
+        logger.debug(f"Cached to file: {indexed_key}")
     except Exception as e:
         logger.warning(f"File cache write error: {e}")
 
