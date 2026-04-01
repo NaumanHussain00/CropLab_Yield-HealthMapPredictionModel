@@ -995,21 +995,23 @@ def create_separate_yield_masks(ndvi_data, predicted_yield, t1=30, t2=50):
         green_mask[high_mask, 3] = alpha_val  # A
         
         # Calculate pixel counts correctly
-        valid_pixels = int(np.sum(valid_mask))
+        total_field_pixels = int(np.sum(valid_mask))  # ALL finite NDVI (field + transparent)
         red_pixels = int(np.sum(low_mask))
         yellow_pixels = int(np.sum(mid_mask))
         green_pixels = int(np.sum(high_mask))
-        transparent_pixels = valid_pixels - red_pixels - yellow_pixels - green_pixels
+        colored_pixels = red_pixels + yellow_pixels + green_pixels  # Only agricultural pixels
+        transparent_pixels = total_field_pixels - colored_pixels  # Non-agricultural
         
         pixel_counts = {
-            "valid": valid_pixels,
+            "valid": colored_pixels,  # Only colored/agricultural pixels
             "transparent": transparent_pixels,
+            "total_field": total_field_pixels,  # All finite pixels
             "red": red_pixels,
             "yellow": yellow_pixels,
             "green": green_pixels
         }
         
-        logger.info(f"Pixel classification - Red: {red_pixels} ({100*red_pixels/valid_pixels:.1f}%), Yellow: {yellow_pixels} ({100*yellow_pixels/valid_pixels:.1f}%), Green: {green_pixels} ({100*green_pixels/valid_pixels:.1f}%)")
+        logger.info(f"Pixel classification - Red: {red_pixels} ({100*red_pixels/colored_pixels:.1f}%), Yellow: {yellow_pixels} ({100*yellow_pixels/colored_pixels:.1f}%), Green: {green_pixels} ({100*green_pixels/colored_pixels:.1f}%)")
         
         return red_mask, yellow_mask, green_mask, pixel_counts
         
@@ -1078,15 +1080,17 @@ def create_separate_ndwi_masks(ndwi_data):
         light_blue_mask[light_blue_pixels, 3] = alpha_val
         
         # Calculate pixel counts
-        valid_pixels = int(np.sum(valid_mask))
+        total_field_pixels = int(np.sum(valid_mask))
         brown_count = int(np.sum(brown_pixels))
         yellow_count = int(np.sum(yellow_pixels))
         light_blue_count = int(np.sum(light_blue_pixels))
-        transparent_count = valid_pixels - brown_count - yellow_count - light_blue_count
+        colored_count = brown_count + yellow_count + light_blue_count  # Only agricultural/water pixels
+        transparent_count = total_field_pixels - colored_count  # Non-agricultural
         
         pixel_counts = {
-            "valid": valid_pixels,
+            "valid": colored_count,  # Only colored/agricultural pixels
             "transparent": transparent_count,
+            "total_field": total_field_pixels,  # All finite pixels
             "brown": brown_count,
             "yellow": yellow_count,
             "light_blue": light_blue_count
@@ -1101,7 +1105,7 @@ def create_separate_ndwi_masks(ndwi_data):
         logger.info(f"  0.0-0.2: YELLOW (low water)")
         logger.info(f"  0.2-0.4: LIGHT BLUE (moderate water)")
         logger.info(f"  > 0.4: transparent (water bodies)")
-        logger.info(f"NDWI pixel classification - Brown: {brown_count} ({100*brown_count/valid_pixels:.1f}%), Yellow: {yellow_count} ({100*yellow_count/valid_pixels:.1f}%), Light Blue: {light_blue_count} ({100*light_blue_count/valid_pixels:.1f}%)")
+        logger.info(f"NDWI pixel classification - Brown: {brown_count} ({100*brown_count/colored_count:.1f}%), Yellow: {yellow_count} ({100*yellow_count/colored_count:.1f}%), Light Blue: {light_blue_count} ({100*light_blue_count/colored_count:.1f}%)")
         
         return brown_mask, yellow_mask, light_blue_mask, pixel_counts
         
@@ -1178,16 +1182,18 @@ def create_separate_ndre_masks(ndre_data):
         dark_green_mask[dark_green_pixels, 3] = alpha_val
         
         # Calculate pixel counts
-        valid_pixels = int(np.sum(valid_mask))
+        total_field_pixels = int(np.sum(valid_mask))
         purple_count = int(np.sum(purple_pixels))
         pink_count = int(np.sum(pink_pixels))
         light_green_count = int(np.sum(light_green_pixels))
         dark_green_count = int(np.sum(dark_green_pixels))
-        transparent_count = valid_pixels - purple_count - pink_count - light_green_count - dark_green_count
+        colored_count = purple_count + pink_count + light_green_count + dark_green_count  # Only vegetation pixels
+        transparent_count = total_field_pixels - colored_count  # Non-vegetation
         
         pixel_counts = {
-            "valid": valid_pixels,
+            "valid": colored_count,  # Only colored/vegetation pixels
             "transparent": transparent_count,
+            "total_field": total_field_pixels,  # All finite pixels
             "purple": purple_count,
             "pink": pink_count,
             "light_green": light_green_count,
@@ -1203,7 +1209,7 @@ def create_separate_ndre_masks(ndre_data):
         logger.info(f"  0.2-0.3: PINK (moderate stress)")
         logger.info(f"  0.3-0.5: LIGHT GREEN (healthy)")
         logger.info(f"  > 0.5: DARK GREEN (very healthy, high chlorophyll)")
-        logger.info(f"NDRE pixel classification - Purple: {purple_count} ({100*purple_count/valid_pixels:.1f}%), Pink: {pink_count} ({100*pink_count/valid_pixels:.1f}%), Light Green: {light_green_count} ({100*light_green_count/valid_pixels:.1f}%), Dark Green: {dark_green_count} ({100*dark_green_count/valid_pixels:.1f}%)")
+        logger.info(f"NDRE pixel classification - Purple: {purple_count} ({100*purple_count/colored_count:.1f}%), Pink: {pink_count} ({100*pink_count/colored_count:.1f}%), Light Green: {light_green_count} ({100*light_green_count/colored_count:.1f}%), Dark Green: {dark_green_count} ({100*dark_green_count/colored_count:.1f}%)")
         
         return purple_mask, pink_mask, light_green_mask, dark_green_mask, pixel_counts
         

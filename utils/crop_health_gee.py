@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 
-from .crop_health_cache import get_cached_ndvi, set_cached_ndvi
+from .crop_health_cache import get_cached_ndvi, set_cached_ndvi, get_cached_index, set_cached_index
 
 logger = logging.getLogger(__name__)
 
@@ -220,3 +220,219 @@ def fetch_all_ndvi(geometry: list, dates: list) -> Dict[str, Any]:
         "year_2": results[2],
         "cache_hits": [r['cache_hit'] if r else False for r in results]
     }
+
+def fetch_ndwi_for_date(
+    geometry: list,
+    target_date_str: str,
+    sat_image=None
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch NDWI (Normalized Difference Water Index) for target date.
+    
+    Args:
+        geometry: [[lat, lon], [lat, lon], ...] polygon
+        target_date_str: "YYYY-MM-DD"
+        sat_image: Optional pre-fetched satellite image. If None, will fetch from GEE.
+    
+    Returns:
+        {
+            "raster": numpy array,
+            "cache_hit": bool
+        }
+    """
+    # Check cache first
+    cached = get_cached_index(geometry, target_date_str, "NDWI")
+    if cached is not None:
+        return {
+            "raster": cached,
+            "cache_hit": True
+        }
+    
+    try:
+        # If no pre-fetched image, get one from GEE
+        if sat_image is None:
+            ee_geometry = ee.Geometry.Polygon(geometry)
+            target_date = datetime.strptime(target_date_str, "%Y-%m-%d")
+            start_date = (target_date - timedelta(days=7)).strftime("%Y-%m-%d")
+            end_date = (target_date + timedelta(days=7)).strftime("%Y-%m-%d")
+            
+            collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
+                .filterBounds(ee_geometry) \
+                .filterDate(start_date, end_date) \
+                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+            
+            if collection.size().getInfo() == 0:
+                logger.warning("No imagery found for NDWI")
+                return None
+            
+            sat_image = collection.sort('CLOUDY_PIXEL_PERCENTAGE').first()
+        
+        # Calculate NDWI: (B8 - B11) / (B8 + B11)
+        ndwi = sat_image.normalizedDifference(['B8', 'B11']).float()
+        
+        # Clip to geometry
+        ee_geometry = ee.Geometry.Polygon(geometry)
+        ndwi_clipped = ndwi.clip(ee_geometry)
+        
+        # Export as numpy array
+        logger.info("Exporting NDWI raster from GEE...")
+        bounds = ee_geometry.bounds().getInfo()
+        coords = bounds['coordinates'][0]
+        
+        min_lon = min(coord[0] for coord in coords)
+        max_lon = max(coord[0] for coord in coords)
+        min_lat = min(coord[1] for coord in coords)
+        max_lat = max(coord[1] for coord in coords)
+        
+        avg_lat = (min_lat + max_lat) / 2
+        meters_per_degree_lon = 111319 * np.cos(np.radians(avg_lat))
+        meters_per_degree_lat = 111139
+        
+        scale = 10
+        width = max(50, int((max_lon - min_lon) * meters_per_degree_lon / scale))
+        height = max(50, int((max_lat - min_lat) * meters_per_degree_lat / scale))
+        width = min(width, 256)
+        height = min(height, 256)
+        
+        scale_x = (max_lon - min_lon) / width
+        scale_y = (max_lat - min_lat) / height
+        
+        request = {
+            'expression': ndwi_clipped,
+            'fileFormat': 'NUMPY_NDARRAY',
+            'grid': {
+                'dimensions': {'width': width, 'height': height},
+                'affineTransform': {
+                    'scaleX': scale_x,
+                    'shearX': 0,
+                    'translateX': min_lon,
+                    'shearY': 0,
+                    'scaleY': -scale_y,
+                    'translateY': max_lat
+                },
+                'crsCode': 'EPSG:4326'
+            }
+        }
+        
+        raster = np.array(ee.data.computePixels(request), dtype=np.float32)
+        logger.info(f"✅ NDWI export successful: min={np.nanmin(raster):.4f}, max={np.nanmax(raster):.4f}")
+        
+        # Cache it
+        set_cached_index(geometry, target_date_str, "NDWI", raster)
+        
+        return {
+            "raster": raster,
+            "cache_hit": False
+        }
+        
+    except Exception as e:
+        logger.error(f"NDWI fetch error: {e}")
+        return None
+
+def fetch_ndre_for_date(
+    geometry: list,
+    target_date_str: str,
+    sat_image=None
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch NDRE (Normalized Difference Red Edge Index) for target date.
+    
+    Args:
+        geometry: [[lat, lon], [lat, lon], ...] polygon
+        target_date_str: "YYYY-MM-DD"
+        sat_image: Optional pre-fetched satellite image. If None, will fetch from GEE.
+    
+    Returns:
+        {
+            "raster": numpy array,
+            "cache_hit": bool
+        }
+    """
+    # Check cache first
+    cached = get_cached_index(geometry, target_date_str, "NDRE")
+    if cached is not None:
+        return {
+            "raster": cached,
+            "cache_hit": True
+        }
+    
+    try:
+        # If no pre-fetched image, get one from GEE
+        if sat_image is None:
+            ee_geometry = ee.Geometry.Polygon(geometry)
+            target_date = datetime.strptime(target_date_str, "%Y-%m-%d")
+            start_date = (target_date - timedelta(days=7)).strftime("%Y-%m-%d")
+            end_date = (target_date + timedelta(days=7)).strftime("%Y-%m-%d")
+            
+            collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
+                .filterBounds(ee_geometry) \
+                .filterDate(start_date, end_date) \
+                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+            
+            if collection.size().getInfo() == 0:
+                logger.warning("No imagery found for NDRE")
+                return None
+            
+            sat_image = collection.sort('CLOUDY_PIXEL_PERCENTAGE').first()
+        
+        # Calculate NDRE: (B8 - B5) / (B8 + B5)
+        ndre = sat_image.normalizedDifference(['B8', 'B5']).float()
+        
+        # Clip to geometry
+        ee_geometry = ee.Geometry.Polygon(geometry)
+        ndre_clipped = ndre.clip(ee_geometry)
+        
+        # Export as numpy array
+        logger.info("Exporting NDRE raster from GEE...")
+        bounds = ee_geometry.bounds().getInfo()
+        coords = bounds['coordinates'][0]
+        
+        min_lon = min(coord[0] for coord in coords)
+        max_lon = max(coord[0] for coord in coords)
+        min_lat = min(coord[1] for coord in coords)
+        max_lat = max(coord[1] for coord in coords)
+        
+        avg_lat = (min_lat + max_lat) / 2
+        meters_per_degree_lon = 111319 * np.cos(np.radians(avg_lat))
+        meters_per_degree_lat = 111139
+        
+        scale = 10
+        width = max(50, int((max_lon - min_lon) * meters_per_degree_lon / scale))
+        height = max(50, int((max_lat - min_lat) * meters_per_degree_lat / scale))
+        width = min(width, 256)
+        height = min(height, 256)
+        
+        scale_x = (max_lon - min_lon) / width
+        scale_y = (max_lat - min_lat) / height
+        
+        request = {
+            'expression': ndre_clipped,
+            'fileFormat': 'NUMPY_NDARRAY',
+            'grid': {
+                'dimensions': {'width': width, 'height': height},
+                'affineTransform': {
+                    'scaleX': scale_x,
+                    'shearX': 0,
+                    'translateX': min_lon,
+                    'shearY': 0,
+                    'scaleY': -scale_y,
+                    'translateY': max_lat
+                },
+                'crsCode': 'EPSG:4326'
+            }
+        }
+        
+        raster = np.array(ee.data.computePixels(request), dtype=np.float32)
+        logger.info(f"✅ NDRE export successful: min={np.nanmin(raster):.4f}, max={np.nanmax(raster):.4f}")
+        
+        # Cache it
+        set_cached_index(geometry, target_date_str, "NDRE", raster)
+        
+        return {
+            "raster": raster,
+            "cache_hit": False
+        }
+        
+    except Exception as e:
+        logger.error(f"NDRE fetch error: {e}")
+        return None

@@ -13,6 +13,7 @@ import io
 import base64
 import logging
 import merged_processor
+import utils.crop_health_gee
 from utils.preprocess import preprocess_input
 from utils.crop_health_analyzer import analyze_crop_health
 
@@ -404,9 +405,8 @@ async def generate_heatmap(request: HeatmapRequest):
         green_pixels = pixel_counts.get("green", 0)
         yellow_pixels = pixel_counts.get("yellow", 0)
         red_pixels = pixel_counts.get("red", 0)
-        valid_pixels = pixel_counts.get("valid", green_pixels + yellow_pixels + red_pixels)
-        total_pixels = valid_pixels if valid_pixels > 0 else (green_pixels + yellow_pixels + red_pixels)
-        multiplier = (green_pixels + 0.5 * yellow_pixels) / total_pixels if total_pixels > 0 else 0
+        valid_pixels = pixel_counts.get("valid", green_pixels + yellow_pixels + red_pixels)  # Only colored pixels
+        multiplier = (green_pixels + 0.5 * yellow_pixels) / valid_pixels if valid_pixels > 0 else 0
         
         old_yield = old_yield * multiplier
         predicted_yield = predicted_yield * multiplier
@@ -440,39 +440,31 @@ async def generate_heatmap(request: HeatmapRequest):
 
         # --- Generate NDWI data and masks ---
         logger.info("Calculating NDWI...")
-        ndwi_image = merged_processor.calculate_ndwi(sat_image)
+        ndwi_result = utils.crop_health_gee.fetch_ndwi_for_date(request.coordinates, date_str, sat_image)
         ndwi_brown_mask = ndwi_yellow_mask = ndwi_light_blue_mask = None
-        if ndwi_image is not None:
-            ndwi_data_raw = merged_processor.export_image_data(ndwi_image, merged_processor.create_geometry_from_geojson(geojson_dict), scale=10, band_names=['NDWI'])
-            if ndwi_data_raw is not None:
-                # Extract NDWI values
-                if hasattr(ndwi_data_raw, 'dtype') and ndwi_data_raw.dtype.names is not None:
-                    ndwi_values = ndwi_data_raw['NDWI'] if 'NDWI' in ndwi_data_raw.dtype.names else ndwi_data_raw[ndwi_data_raw.dtype.names[0]]
-                else:
-                    ndwi_values = ndwi_data_raw
-                ndwi_values = ndwi_values.astype(np.float32)
-                # Generate masks: brown -> yellow -> light blue
-                ndwi_brown_mask, ndwi_yellow_mask, ndwi_light_blue_mask, ndwi_pixel_counts = merged_processor.create_separate_ndwi_masks(
-                    ndwi_values
-                )
+        ndwi_cache_hit = False
+        if ndwi_result is not None:
+            ndwi_cache_hit = ndwi_result.get("cache_hit", False)
+            ndwi_values = ndwi_result["raster"].astype(np.float32)
+            logger.info(f"NDWI fetched (cache_hit={ndwi_cache_hit})")
+            # Generate masks: brown -> yellow -> light blue
+            ndwi_brown_mask, ndwi_yellow_mask, ndwi_light_blue_mask, ndwi_pixel_counts = merged_processor.create_separate_ndwi_masks(
+                ndwi_values
+            )
 
         # --- Generate NDRE data and masks ---
         logger.info("Calculating NDRE...")
-        ndre_image = merged_processor.calculate_ndre(sat_image)
+        ndre_result = utils.crop_health_gee.fetch_ndre_for_date(request.coordinates, date_str, sat_image)
         ndre_purple_mask = ndre_pink_mask = ndre_light_green_mask = ndre_dark_green_mask = None
-        if ndre_image is not None:
-            ndre_data_raw = merged_processor.export_image_data(ndre_image, merged_processor.create_geometry_from_geojson(geojson_dict), scale=10, band_names=['NDRE'])
-            if ndre_data_raw is not None:
-                # Extract NDRE values
-                if hasattr(ndre_data_raw, 'dtype') and ndre_data_raw.dtype.names is not None:
-                    ndre_values = ndre_data_raw['NDRE'] if 'NDRE' in ndre_data_raw.dtype.names else ndre_data_raw[ndre_data_raw.dtype.names[0]]
-                else:
-                    ndre_values = ndre_data_raw
-                ndre_values = ndre_values.astype(np.float32)
-                # Generate masks: purple -> pink -> light green -> dark green
-                ndre_purple_mask, ndre_pink_mask, ndre_light_green_mask, ndre_dark_green_mask, ndre_pixel_counts = merged_processor.create_separate_ndre_masks(
-                    ndre_values
-                )
+        ndre_cache_hit = False
+        if ndre_result is not None:
+            ndre_cache_hit = ndre_result.get("cache_hit", False)
+            ndre_values = ndre_result["raster"].astype(np.float32)
+            logger.info(f"NDRE fetched (cache_hit={ndre_cache_hit})")
+            # Generate masks: purple -> pink -> light green -> dark green
+            ndre_purple_mask, ndre_pink_mask, ndre_light_green_mask, ndre_dark_green_mask, ndre_pixel_counts = merged_processor.create_separate_ndre_masks(
+                ndre_values
+            )
 
         # --- Convert NDWI and NDRE masks to base64 ---
         ndwi_masks_response = {}
