@@ -1,5 +1,6 @@
 from datetime import date
 import logging
+import numpy as np
 
 from .date_resolver import resolve_reference_date, get_historical_dates
 from .crop_health_gee import fetch_all_ndvi, ServiceError
@@ -76,12 +77,32 @@ def analyze_crop_health(
     summary = compute_summary_stats(classified_image)
     logger.info("✅ Statistics computed")
     
-    # Step 8: Build response
+    # Step 8: Calculate NDVI trend across years
+    logger.info("Calculating NDVI trend...")
+    ndvi_trend = []
+    year_keys = ['current', 'year_1', 'year_2']
+    for i, year_key in enumerate(year_keys):
+        if year_key in ndvi_rasters and ndvi_rasters[year_key] is not None:
+            raster = ndvi_rasters[year_key].get('raster')
+            date_used = ndvi_rasters[year_key].get('date_used', dates_str[i])
+            if raster is not None:
+                valid_pixels = np.isfinite(raster)
+                if np.any(valid_pixels):
+                    mean_ndvi = float(np.mean(raster[valid_pixels]))
+                    ndvi_trend.append({
+                        "date": date_used,
+                        "mean_ndvi": round(mean_ndvi, 4)
+                    })
+                    logger.info(f"  {date_used}: mean_ndvi = {mean_ndvi:.4f}")
+    logger.info("✅ NDVI trend calculated")
+    
+    # Step 9: Build response
     result = {
         "reference_date": reference_date.strftime("%Y-%m-%d"),
         "years_used": dates_str,
         "tile_urls": tile_urls,
         "summary": summary,
+        "ndvi_trend": ndvi_trend,
         "cache_hits": ndvi_rasters['cache_hits']
     }
     
