@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
-from datetime import datetime
+from datetime import datetime, date
 import numpy as np
 import tensorflow as tf
 import joblib
@@ -14,6 +14,7 @@ import base64
 import logging
 import merged_processor
 from utils.preprocess import preprocess_input
+from utils.crop_health_analyzer import analyze_crop_health
 
 app = FastAPI(
     title="Crop Yield Prediction API",
@@ -40,6 +41,8 @@ model = None
 scaler = None
 model_error = None
 scaler_error = None
+gee_status = None
+gee_error = None
 
 try:
     # Try loading with different compatibility options
@@ -63,6 +66,29 @@ except Exception as e:
     scaler_error = str(e)
     logger.error(f"❌ Error loading scaler: {e}")
 
+# --- Startup event to initialize GEE ---
+@app.on_event("startup")
+async def startup_event():
+    """Initialize Google Earth Engine when server starts"""
+    global gee_status, gee_error
+    try:
+        logger.info("🚀 Server startup - Initializing Google Earth Engine (this may take a moment)...")
+        start_time = datetime.now()
+        
+        gee_status = merged_processor.initialize_earth_engine()
+        
+        elapsed = (datetime.now() - start_time).total_seconds()
+        if gee_status:
+            logger.info(f"✅ Google Earth Engine ready in {elapsed:.2f}s")
+        else:
+            gee_error = "GEE initialization returned False - check credentials"
+            logger.error(f"❌ GEE initialization failed: {gee_error}")
+    except Exception as e:
+        gee_error = str(e)
+        logger.error(f"❌ Error initializing GEE at startup: {e}")
+        logger.warning("⚠️  API will still start but GEE-dependent endpoints will fail")
+        logger.warning("💡 Check system clock sync: Right-click Windows clock → 'Adjust date/time' → 'Sync now'")
+
 # Pydantic models
 
 def get_corresponding_date():
@@ -80,26 +106,30 @@ class HeatmapRequest(BaseModel):
     t1: float = 3.0  # Threshold for low yield
     t2: float = 4.5  # Threshold for high yield
 
+class CropHealthRequest(BaseModel):
+    geometry: List[List[float]]  # [[lat, lon], [lat, lon], ...]
+    cultivation_date: date
+    harvest_date: date
+
 # Health check endpoints
 @app.get("/")
 @app.get("/health")
 async def health_check():
     """Health check and root endpoint for monitoring"""
-    gee_status = merged_processor.initialize_earth_engine()
-    
     return {
         "status": "healthy" if model and scaler and gee_status else "unhealthy",
         "message": "🌾 Crop Yield Prediction API is running",
         "components": {
             "model": "loaded" if model else f"error: {model_error}",
             "scaler": "loaded" if scaler else f"error: {scaler_error}",
-            "google_earth_engine": "connected" if gee_status else "disconnected"
+            "google_earth_engine": "connected" if gee_status else f"error: {gee_error}"
         },
         "version": "1.0.0",
         "endpoints": {
             "/predict": "Predict crop yield from coordinates",
             "/generate_heatmap": "Generate color-coded heatmap visualization",
-            "/export_arrays": "Export NDVI and sensor arrays as .npz file"
+            "/export_arrays": "Export NDVI and sensor arrays as .npz file",
+            "/crop_health/analyze": "Analyze crop health using multi-year satellite imagery"
         }
     }
 
@@ -121,10 +151,11 @@ async def predict(request: PredictRequest):
             msg += f"Scaler error: {scaler_error}. "
         raise HTTPException(status_code=500, detail=msg.strip())
 
+    # --- Check GEE initialized ---
+    if not gee_status:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize Google Earth Engine: {gee_error}")
+
     try:
-        # --- Initialize Earth Engine ---
-        if not merged_processor.initialize_earth_engine():
-            raise HTTPException(status_code=500, detail="Failed to initialize Google Earth Engine")
 
         # --- Get corresponding date ---
         date_str = get_corresponding_date()
@@ -245,10 +276,11 @@ async def generate_heatmap(request: HeatmapRequest):
             msg += f"Scaler error: {scaler_error}. "
         raise HTTPException(status_code=500, detail=msg.strip())
 
+    # --- Check GEE initialized ---
+    if not gee_status:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize Google Earth Engine: {gee_error}")
+
     try:
-        # --- Initialize Earth Engine ---
-        if not merged_processor.initialize_earth_engine():
-            raise HTTPException(status_code=500, detail="Failed to initialize Google Earth Engine")
 
         # --- Get corresponding date ---
         date_str = get_corresponding_date()
@@ -498,9 +530,11 @@ async def export_arrays(request: HeatmapRequest):
     Utility endpoint: generate NDVI and sensor arrays for the provided coordinates
     and return them as a .npz file in-memory (no disk writes).
     """
+    # --- Check GEE initialized ---
+    if not gee_status:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize Google Earth Engine: {gee_error}")
+
     try:
-        if not merged_processor.initialize_earth_engine():
-            raise HTTPException(status_code=500, detail="Failed to initialize Google Earth Engine")
 
         date_str = get_corresponding_date()
 
@@ -532,3 +566,46 @@ async def export_arrays(request: HeatmapRequest):
         import traceback
         logger.error(f"Export arrays error: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Export arrays failed: {str(e)}")
+
+
+@app.post("/crop_health/analyze")
+async def analyze_crop_health_api(request: CropHealthRequest):
+    """
+    Analyze crop health for given geometry and dates.
+    
+    Uses satellite imagery (NDVI) to assess crop health with:
+    - Reference date determination based on cultivation and harvest dates
+    - Multi-year comparison (current year vs. previous 2 years)
+    - Anomaly detection and pixel classification (healthy/stressed)
+    - Summary statistics and caching for performance
+    
+    Args:
+        geometry: List of [latitude, longitude] pairs forming a polygon
+        cultivation_date: Crop cultivation start date (YYYY-MM-DD)
+        harvest_date: Crop harvest date (YYYY-MM-DD)
+    
+    Returns:
+        JSON with reference date, analyzed dates, tile URLs, summary stats, and cache info
+    """
+    try:
+        if not gee_status:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Google Earth Engine not initialized: {gee_error}"
+            )
+        
+        logger.info(f"Analyzing crop health for geometry with {len(request.geometry)} vertices")
+        
+        result = analyze_crop_health(
+            geometry=request.geometry,
+            cultivation_date=request.cultivation_date,
+            harvest_date=request.harvest_date
+        )
+        
+        return JSONResponse(content=result)
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Crop health analysis error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Crop health analysis failed: {str(e)}")

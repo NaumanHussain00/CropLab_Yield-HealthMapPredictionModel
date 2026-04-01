@@ -36,14 +36,6 @@ SENSOR_ASSETS = {
 def initialize_earth_engine():
     """Initialize Google Earth Engine with service account authentication"""
     try:
-        # Check if already initialized
-        try:
-            ee.Number(1).getInfo()
-            logger.info("✅ Google Earth Engine already initialized")
-            return True
-        except:
-            pass
-
         # Try environment variables first (for production/Render)
         if os.getenv('GEE_SERVICE_ACCOUNT_EMAIL') and os.getenv('GEE_PRIVATE_KEY'):
             logger.info("🌐 Initializing GEE with environment variables (Production mode)")
@@ -75,15 +67,8 @@ def initialize_earth_engine():
                     key_file=temp_file_path
                 )
                 ee.Initialize(credentials)
-                
-                # Test the initialization
-                test_result = ee.Number(1).getInfo()
-                if test_result == 1:
-                    logger.info("✅ Google Earth Engine initialized successfully with environment variables")
-                    return True
-                else:
-                    logger.error("❌ GEE initialization test failed")
-                    return False
+                logger.info("✅ Google Earth Engine initialized with environment variables")
+                return True
             finally:
                 # Clean up temporary file
                 try:
@@ -93,7 +78,7 @@ def initialize_earth_engine():
         
         # Fallback to local file (for development)
         elif os.path.exists(SERVICE_ACCOUNT_PATH):
-            logger.info("� Initializing GEE with local service account file (Development mode)")
+            logger.info("📁 Initializing GEE with local service account file (Development mode)")
             
             with open(SERVICE_ACCOUNT_PATH, 'r') as f:
                 service_account = json.load(f)
@@ -101,19 +86,13 @@ def initialize_earth_engine():
             logger.info(f"Initializing GEE with service account: {service_account.get('client_email', 'Unknown')}")
 
             # Use the key file path directly with ee.Initialize
-            ee.Initialize(ee.ServiceAccountCredentials(
+            credentials = ee.ServiceAccountCredentials(
                 email=service_account['client_email'],
                 key_file=SERVICE_ACCOUNT_PATH
-            ))
-            
-            # Test the initialization
-            test_result = ee.Number(1).getInfo()
-            if test_result == 1:
-                logger.info("✅ Google Earth Engine initialized successfully")
-                return True
-            else:
-                logger.error("❌ GEE initialization test failed")
-                return False
+            )
+            ee.Initialize(credentials)
+            logger.info("✅ Google Earth Engine initialized successfully")
+            return True
         else:
             logger.error("❌ No Google Earth Engine credentials found!")
             logger.error("💡 For production: Set GEE_SERVICE_ACCOUNT_EMAIL and GEE_PRIVATE_KEY environment variables")

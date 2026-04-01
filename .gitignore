@@ -4,6 +4,7 @@
 .env.example
 # Service account file (don't commit to git)
 earth-engine-service-account.json
+cache/
 .venv
 # Python
 __pycache__/
