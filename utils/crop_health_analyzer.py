@@ -18,7 +18,7 @@ def analyze_crop_health(
     Analyze crop health using satellite imagery.
     
     Args:
-        geometry: [[lat, lon], [lat, lon], ...] polygon vertices
+        geometry: [[lon, lat], [lon, lat], ...] polygon vertices (GeoJSON format, passed directly to ee.Geometry.Polygon)
         cultivation_date: date object
         harvest_date: date object
     
@@ -63,7 +63,16 @@ def analyze_crop_health(
     
     # Step 5: Classify pixels
     logger.info("Classifying pixels...")
-    current_ndvi = ndvi_rasters['current']['raster']
+    # Get current NDVI - fallback to year_1 if current is unavailable
+    if ndvi_rasters['current'] is not None:
+        current_ndvi = ndvi_rasters['current']['raster']
+    elif ndvi_rasters['year_1'] is not None:
+        logger.warning("⚠️ Using year_1 data for classification (current unavailable)")
+        current_ndvi = ndvi_rasters['year_1']['raster']
+    else:
+        logger.warning("⚠️ Using year_2 data for classification (current and year_1 unavailable)")
+        current_ndvi = ndvi_rasters['year_2']['raster']
+    
     classified_image = classify_pixels(current_ndvi, anomaly)
     logger.info("✅ Pixels classified")
     

@@ -7,7 +7,14 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = os.getenv("CACHE_DIR", "./cache")
+# Determine cache directory - use absolute path for reliability
+_cache_env = os.getenv("CACHE_DIR", "./cache")
+if os.path.isabs(_cache_env):
+    CACHE_DIR = _cache_env
+else:
+    # Convert relative path to absolute path
+    CACHE_DIR = os.path.abspath(_cache_env)
+
 USE_REDIS = os.getenv("USE_REDIS", "false").lower() == "true"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
@@ -29,7 +36,11 @@ if USE_REDIS and REDIS_AVAILABLE:
         redis_client = None
 
 # Ensure cache directory exists
-os.makedirs(CACHE_DIR, exist_ok=True)
+try:
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    logger.debug(f"Cache directory: {CACHE_DIR}")
+except Exception as e:
+    logger.warning(f"⚠️ Could not create cache directory {CACHE_DIR}: {e}")
 
 def get_cache_key(geometry: list, date_str: str) -> str:
     """
@@ -73,21 +84,25 @@ def get_cached_ndvi(geometry: list, date_str: str) -> Optional[np.ndarray]:
     if redis_client:
         try:
             cached = redis_client.get(indexed_key)
-            if cached:
-                logger.info(f"✅ Cache hit (Redis): {indexed_key}")
-                return np.frombuffer(cached, dtype=np.float32)
+            shape_cached = redis_client.get(f"{indexed_key}_shape")
+            if cached and shape_cached:
+                shape = tuple(json.loads(shape_cached))
+                logger.info(f"✅ Cache hit (Redis): {indexed_key}, shape={shape}")
+                return np.frombuffer(cached, dtype=np.float32).reshape(shape)
+            elif cached:
+                logger.warning(f"⚠️ Redis cache hit but no shape info: {indexed_key}")
         except Exception as e:
             logger.warning(f"Redis read error: {e}")
-    
+
     # Fall back to file cache
     safe_key = get_cache_filename(geometry, date_str)
-    cache_file = os.path.join(CACHE_DIR, f"{safe_key}_NDVI.json")  # Append _NDVI to filename
+    cache_file = os.path.join(CACHE_DIR, f"{safe_key}_NDVI.json")
     if os.path.exists(cache_file):
         try:
             with open(cache_file, 'r') as f:
                 data = json.load(f)
                 age = (datetime.now() - datetime.fromisoformat(data['timestamp'])).total_seconds()
-                if age < 1800:  # 30 minutes TTL
+                if age < 86400:  # 24 hours TTL
                     logger.info(f"✅ Cache hit (File): {indexed_key}")
                     return np.array(data['raster'], dtype=np.float32)
                 else:
@@ -95,7 +110,7 @@ def get_cached_ndvi(geometry: list, date_str: str) -> Optional[np.ndarray]:
                     os.remove(cache_file)
         except Exception as e:
             logger.warning(f"File cache read error: {e}")
-    
+
     return None
 
 def set_cached_ndvi(geometry: list, date_str: str, raster: np.ndarray) -> None:
@@ -106,17 +121,19 @@ def set_cached_ndvi(geometry: list, date_str: str, raster: np.ndarray) -> None:
     # Try Redis first
     if redis_client:
         try:
-            raster_bytes = np.asarray(raster, dtype=np.float32).tobytes()
-            redis_client.setex(indexed_key, 1800, raster_bytes)  # 30 min TTL
-            logger.debug(f"Cached to Redis: {indexed_key}")
+            raster_arr = np.asarray(raster, dtype=np.float32)
+            raster_bytes = raster_arr.tobytes()
+            redis_client.setex(indexed_key, 1800, raster_bytes)
+            redis_client.setex(f"{indexed_key}_shape", 1800, json.dumps(list(raster_arr.shape)))
+            logger.debug(f"Cached to Redis: {indexed_key}, shape={raster_arr.shape}")
             return
         except Exception as e:
             logger.warning(f"Redis write error: {e}")
-    
+
     # Fall back to file cache
     try:
         safe_key = get_cache_filename(geometry, date_str)
-        cache_file = os.path.join(CACHE_DIR, f"{safe_key}_NDVI.json")  # Append _NDVI to filename
+        cache_file = os.path.join(CACHE_DIR, f"{safe_key}_NDVI.json")
         cache_data = {
             "timestamp": datetime.now().isoformat(),
             "raster": np.asarray(raster, dtype=np.float32).tolist()
@@ -135,9 +152,13 @@ def get_cached_index(geometry: list, date_str: str, index_name: str) -> Optional
     if redis_client:
         try:
             cached = redis_client.get(key)
-            if cached:
-                logger.info(f"✅ Cache hit (Redis): {key}")
-                return np.frombuffer(cached, dtype=np.float32)
+            shape_cached = redis_client.get(f"{key}_shape")
+            if cached and shape_cached:
+                shape = tuple(json.loads(shape_cached))
+                logger.info(f"✅ Cache hit (Redis): {key}, shape={shape}")
+                return np.frombuffer(cached, dtype=np.float32).reshape(shape)
+            elif cached:
+                logger.warning(f"⚠️ Redis cache hit but no shape info: {key}")
         except Exception as e:
             logger.warning(f"Redis read error: {e}")
     
@@ -167,9 +188,10 @@ def set_cached_index(geometry: list, date_str: str, index_name: str, raster: np.
     # Try Redis first
     if redis_client:
         try:
-            raster_bytes = np.asarray(raster, dtype=np.float32).tobytes()
-            redis_client.setex(key, 1800, raster_bytes)  # 30 min TTL
-            logger.debug(f"Cached to Redis: {key}")
+            raster_arr = np.asarray(raster, dtype=np.float32)
+            redis_client.setex(key, 1800, raster_arr.tobytes())
+            redis_client.setex(f"{key}_shape", 1800, json.dumps(list(raster_arr.shape)))
+            logger.debug(f"Cached to Redis: {key}, shape={raster_arr.shape}")
             return
         except Exception as e:
             logger.warning(f"Redis write error: {e}")

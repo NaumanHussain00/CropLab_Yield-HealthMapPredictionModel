@@ -11,167 +11,172 @@ logger = logging.getLogger(__name__)
 class ServiceError(Exception):
     pass
 
+def _mask_s2_clouds(image):
+    """Apply SCL-based cloud mask to a Sentinel-2 image."""
+    scl = image.select('SCL')
+    clear = scl.neq(3).And(scl.neq(8)).And(scl.neq(9)).And(scl.neq(10))
+    return image.updateMask(clear)
+
+
+def _compute_ndvi(image):
+    """Compute NDVI from a Sentinel-2 image and return single-band image."""
+    return image.normalizedDifference(['B8', 'B4']).rename('ndvi').float()
+
+
+def _export_raster(ee_image, ee_geometry, max_dim=256):
+    """Export a single-band EE image clipped to geometry as a numpy array."""
+    clipped = ee_image.clip(ee_geometry)
+
+    bounds = ee_geometry.bounds().getInfo()
+    coords = bounds['coordinates'][0]
+    min_lon = min(c[0] for c in coords)
+    max_lon = max(c[0] for c in coords)
+    min_lat = min(c[1] for c in coords)
+    max_lat = max(c[1] for c in coords)
+
+    avg_lat = (min_lat + max_lat) / 2
+    m_per_deg_lon = 111319 * np.cos(np.radians(avg_lat))
+    m_per_deg_lat = 111139
+
+    scale = 10
+    width = max(50, int((max_lon - min_lon) * m_per_deg_lon / scale))
+    height = max(50, int((max_lat - min_lat) * m_per_deg_lat / scale))
+
+    if max(width, height) > max_dim:
+        ratio = max_dim / max(width, height)
+        width = max(50, int(width * ratio))
+        height = max(50, int(height * ratio))
+
+    scale_x = (max_lon - min_lon) / width
+    scale_y = (max_lat - min_lat) / height
+
+    request = {
+        'expression': clipped,
+        'fileFormat': 'NUMPY_NDARRAY',
+        'grid': {
+            'dimensions': {'width': width, 'height': height},
+            'affineTransform': {
+                'scaleX': scale_x, 'shearX': 0, 'translateX': min_lon,
+                'shearY': 0, 'scaleY': -scale_y, 'translateY': max_lat
+            },
+            'crsCode': 'EPSG:4326'
+        }
+    }
+
+    pixel_data = ee.data.computePixels(request)
+    if pixel_data is None:
+        raise ValueError("computePixels returned None")
+
+    raster_raw = np.array(pixel_data)
+    if raster_raw.dtype.names:
+        raster = raster_raw[raster_raw.dtype.names[0]].astype(np.float32)
+    else:
+        raster = raster_raw.astype(np.float32)
+
+    logger.info(f"Export: {width}x{height}, shape={raster.shape}, "
+                f"valid={np.sum(np.isfinite(raster))}/{raster.size}")
+    return raster
+
+
 def fetch_ndvi_for_date(
     geometry: list,
     target_date_str: str,
-    window_days: int = 7,
-    cloud_threshold: int = 20
+    window_days: int = 30,
+    cloud_threshold: int = 30,
+    max_retries: int = 2
 ) -> Optional[Dict[str, Any]]:
     """
-    Fetch NDVI for target date from Sentinel-2.
-    
-    geometry: [[lat, lon], [lat, lon], ...] polygon
+    Fetch NDVI median composite for target date from Sentinel-2.
+
+    Uses a median composite of all cloud-masked images within the time window.
+    This eliminates Sentinel-2 detector striping artifacts that appear when
+    subtracting single images from different orbital passes.
+
+    geometry: [[lon, lat], [lon, lat], ...] polygon (GeoJSON format)
     target_date_str: "YYYY-MM-DD"
-    window_days: search window = target_date ± window_days
-    cloud_threshold: max acceptable cloud percentage
-    
-    Returns:
-        {
-            "raster": numpy array,
-            "cache_hit": bool,
-            "date_used": "YYYY-MM-DD"
-        }
+    window_days: search window = target_date +/- window_days (default 30)
+    cloud_threshold: max acceptable scene cloud percentage (default 30)
     """
+    if max_retries <= 0:
+        logger.error("Max retries exhausted")
+        return None
+
     # Check cache first
     cached = get_cached_ndvi(geometry, target_date_str)
     if cached is not None:
-        return {
-            "raster": cached,
-            "cache_hit": True,
-            "date_used": target_date_str
-        }
-    
+        return {"raster": cached, "cache_hit": True, "date_used": target_date_str}
+
     try:
-        # Convert polygon to EE geometry
         ee_geometry = ee.Geometry.Polygon(geometry)
-        
-        # Parse dates
+
         target_date = datetime.strptime(target_date_str, "%Y-%m-%d")
         start_date = (target_date - timedelta(days=window_days)).strftime("%Y-%m-%d")
         end_date = (target_date + timedelta(days=window_days)).strftime("%Y-%m-%d")
-        
-        logger.info(f"Searching for image: {start_date} to {end_date}, window={window_days}d, cloud_threshold={cloud_threshold}%")
-        
-        # Get Sentinel-2 collection
-        collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
-            .filterBounds(ee_geometry) \
-            .filterDate(start_date, end_date) \
-            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_threshold))
-        
-        if collection.size().getInfo() == 0:
-            logger.warning(f"No imagery found with {window_days}d window and {cloud_threshold}% cloud threshold")
-            
-            # Retry with progressively larger windows and looser cloud thresholds
-            if window_days < 30:
-                next_window = 15 if window_days < 15 else 30
-                logger.info(f"Retrying with {next_window}-day window...")
-                return fetch_ndvi_for_date(
-                    geometry, target_date_str, 
-                    window_days=next_window,
-                    cloud_threshold=cloud_threshold
-                )
-            elif cloud_threshold < 40:
-                next_threshold = 40
-                logger.info(f"Retrying with looser cloud threshold ({next_threshold}%)...")
-                return fetch_ndvi_for_date(
-                    geometry, target_date_str,
-                    window_days=30,
-                    cloud_threshold=next_threshold
-                )
+
+        logger.info(f"Building NDVI composite: {start_date} to {end_date}, "
+                     f"window={window_days}d, cloud<{cloud_threshold}%")
+
+        collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+            .filterBounds(ee_geometry)
+            .filterDate(start_date, end_date)
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_threshold)))
+
+        count = collection.size().getInfo()
+        if count == 0:
+            logger.warning(f"No imagery found ({window_days}d, {cloud_threshold}%)")
+            if window_days < 60:
+                return fetch_ndvi_for_date(geometry, target_date_str,
+                    window_days=60, cloud_threshold=40, max_retries=max_retries - 1)
             return None
-        
-        # Select best image (least cloud cover)
-        best_image = collection.sort('CLOUDY_PIXEL_PERCENTAGE').first()
-        
-        # Get metadata
-        image_date = ee.Date(best_image.get('system:time_start')).format('YYYY-MM-dd').getInfo()
-        cloud_percent = best_image.get('CLOUDY_PIXEL_PERCENTAGE').getInfo()
-        logger.info(f"Selected image: {image_date} ({cloud_percent}% cloud)")
-        
-        # Apply cloud mask using SCL band
-        scl = best_image.select('SCL')
-        cloud_mask = scl.neq(3).And(scl.neq(8)).And(scl.neq(9)).And(scl.neq(10))
-        best_image = best_image.updateMask(cloud_mask)
-        
-        # Calculate NDVI: (B8 - B4) / (B8 + B4)
-        ndvi = best_image.normalizedDifference(['B8', 'B4']).float()
-        
-        # Clip to geometry
-        ndvi_clipped = ndvi.clip(ee_geometry)
-        
-        # Export as numpy array using exact method from merged_processor.export_image_data
-        logger.info("Exporting NDVI raster from GEE...")
-        
-        try:
-            # Get bounds using bounds() method
-            bounds = ee_geometry.bounds().getInfo()
-            coords = bounds['coordinates'][0]
-            
-            min_lon = min(coord[0] for coord in coords)
-            max_lon = max(coord[0] for coord in coords)
-            min_lat = min(coord[1] for coord in coords)
-            max_lat = max(coord[1] for coord in coords)
-            
-            # Calculate dimensions using meters per degree
-            avg_lat = (min_lat + max_lat) / 2
-            meters_per_degree_lon = 111319 * np.cos(np.radians(avg_lat))
-            meters_per_degree_lat = 111139
-            
-            scale = 10  # 10 meters per pixel
-            width = max(50, int((max_lon - min_lon) * meters_per_degree_lon / scale))
-            height = max(50, int((max_lat - min_lat) * meters_per_degree_lat / scale))
-            width = min(width, 256)
-            height = min(height, 256)
-            
-            logger.info(f"Export dimensions: {width}x{height} at {scale}m resolution")
-            
-            scale_x = (max_lon - min_lon) / width
-            scale_y = (max_lat - min_lat) / height
-            
-            # Build request exactly like merged_processor
-            request = {
-                'expression': ndvi_clipped,
-                'fileFormat': 'NUMPY_NDARRAY',
-                'grid': {
-                    'dimensions': {'width': width, 'height': height},
-                    'affineTransform': {
-                        'scaleX': scale_x,
-                        'shearX': 0,
-                        'translateX': min_lon,
-                        'shearY': 0,
-                        'scaleY': -scale_y,
-                        'translateY': max_lat
-                    },
-                    'crsCode': 'EPSG:4326'
-                }
-            }
-            
-            logger.info("Fetching pixel data from GEE...")
-            pixel_data = ee.data.computePixels(request)
-            
-            if pixel_data is None:
-                raise ValueError("computePixels returned None")
-            
-            raster = np.array(pixel_data, dtype=np.float32)
-            logger.info(f"✅ Export successful: shape={raster.shape}, min={np.nanmin(raster):.4f}, max={np.nanmax(raster):.4f}")
-            
-        except Exception as e:
-            logger.error(f"Export failed: {e}")
-            logger.warning("⚠️ Using synthetic NDVI data as fallback")
-            raster = np.random.normal(0.65, 0.1, (100, 100)).astype(np.float32)
-            raster = np.clip(raster, 0, 1)
-        
-        logger.info(f"✅ Fetched NDVI for {image_date}, shape: {raster.shape}")
-        
-        # Cache it
+
+        logger.info(f"Found {count} images, building median composite...")
+
+        # Strategy: mosaic tiles from same date FIRST (fills tile gaps),
+        # then median across dates (eliminates detector striping).
+        # Without this, farms spanning two Sentinel-2 tiles only get data
+        # from the tile overlap zone.
+        masked = collection.map(_mask_s2_clouds)
+
+        # Get unique acquisition dates
+        unique_dates = (masked
+            .aggregate_array('system:time_start')
+            .map(lambda t: ee.Date(t).format('YYYY-MM-dd'))
+            .distinct())
+
+        def _daily_mosaic_ndvi(date_str):
+            """Mosaic all tiles from one date, then compute NDVI."""
+            d = ee.Date(date_str)
+            daily = masked.filterDate(d, d.advance(1, 'day'))
+            # .mosaic() merges adjacent tiles into one seamless image
+            return (daily.mosaic()
+                .normalizedDifference(['B8', 'B4']).float()
+                .set('system:time_start', d.millis()))
+
+        daily_mosaics = ee.ImageCollection(unique_dates.map(_daily_mosaic_ndvi))
+        n_dates = unique_dates.size().getInfo()
+        logger.info(f"Mosaicked into {n_dates} daily composites, computing median...")
+
+        # Median across daily mosaics — each covers full geometry, no tile gaps
+        ndvi_composite = daily_mosaics.median()
+
+        # Export to numpy
+        raster = _export_raster(ndvi_composite, ee_geometry)
+
+        valid_count = np.sum(np.isfinite(raster))
+        if valid_count == 0:
+            logger.warning("Composite has no valid pixels")
+            if cloud_threshold < 50:
+                return fetch_ndvi_for_date(geometry, target_date_str,
+                    window_days=60, cloud_threshold=50, max_retries=max_retries - 1)
+            return None
+
+        logger.info(f"NDVI composite: min={np.nanmin(raster):.4f}, "
+                     f"max={np.nanmax(raster):.4f}, valid={valid_count/raster.size*100:.1f}%")
+
         set_cached_ndvi(geometry, target_date_str, raster)
-        
-        return {
-            "raster": raster,
-            "cache_hit": False,
-            "date_used": image_date
-        }
-        
+
+        return {"raster": raster, "cache_hit": False, "date_used": target_date_str}
+
     except Exception as e:
         logger.error(f"Error fetching NDVI: {e}")
         return None
@@ -230,7 +235,7 @@ def fetch_ndwi_for_date(
     Fetch NDWI (Normalized Difference Water Index) for target date.
     
     Args:
-        geometry: [[lat, lon], [lat, lon], ...] polygon
+        geometry: [[lon, lat], [lon, lat], ...] polygon (GeoJSON format)
         target_date_str: "YYYY-MM-DD"
         sat_image: Optional pre-fetched satellite image. If None, will fetch from GEE.
     
@@ -314,7 +319,11 @@ def fetch_ndwi_for_date(
             }
         }
         
-        raster = np.array(ee.data.computePixels(request), dtype=np.float32)
+        raster_raw = np.array(ee.data.computePixels(request))
+        if raster_raw.dtype.names:
+            raster = raster_raw[raster_raw.dtype.names[0]].astype(np.float32)
+        else:
+            raster = raster_raw.astype(np.float32)
         logger.info(f"✅ NDWI export successful: min={np.nanmin(raster):.4f}, max={np.nanmax(raster):.4f}")
         
         # Cache it
@@ -338,7 +347,7 @@ def fetch_ndre_for_date(
     Fetch NDRE (Normalized Difference Red Edge Index) for target date.
     
     Args:
-        geometry: [[lat, lon], [lat, lon], ...] polygon
+        geometry: [[lon, lat], [lon, lat], ...] polygon (GeoJSON format)
         target_date_str: "YYYY-MM-DD"
         sat_image: Optional pre-fetched satellite image. If None, will fetch from GEE.
     
@@ -422,7 +431,11 @@ def fetch_ndre_for_date(
             }
         }
         
-        raster = np.array(ee.data.computePixels(request), dtype=np.float32)
+        raster_raw = np.array(ee.data.computePixels(request))
+        if raster_raw.dtype.names:
+            raster = raster_raw[raster_raw.dtype.names[0]].astype(np.float32)
+        else:
+            raster = raster_raw.astype(np.float32)
         logger.info(f"✅ NDRE export successful: min={np.nanmin(raster):.4f}, max={np.nanmax(raster):.4f}")
         
         # Cache it

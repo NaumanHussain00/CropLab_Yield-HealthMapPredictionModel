@@ -99,6 +99,21 @@ def get_corresponding_date():
     year = current.year - 3
     return f"{year}-10-01"
 
+def sanitize_json_response(obj):
+    """Recursively sanitize response to remove inf/-inf/-nan values that break JSON serialization"""
+    if isinstance(obj, dict):
+        return {k: sanitize_json_response(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_json_response(item) for item in obj]
+    elif isinstance(obj, float):
+        if np.isinf(obj) or np.isnan(obj):
+            return None  # Replace inf/-inf/nan with null
+        return obj
+    elif isinstance(obj, np.ndarray):
+        return sanitize_json_response(obj.tolist())
+    else:
+        return obj
+
 class PredictRequest(BaseModel):
     coordinates: List[List[float]]  # List of [longitude, latitude] points
 
@@ -106,9 +121,11 @@ class HeatmapRequest(BaseModel):
     coordinates: List[List[float]]  # List of [longitude, latitude] points
     t1: float = 3.0  # Threshold for low yield
     t2: float = 4.5  # Threshold for high yield
+    cultivation_date: Optional[date] = None  # Optional: crop cultivation start date
+    harvest_date: Optional[date] = None  # Optional: crop harvest date
 
 class CropHealthRequest(BaseModel):
-    geometry: List[List[float]]  # [[lat, lon], [lat, lon], ...]
+    geometry: List[List[float]]  # [[lon, lat], [lon, lat], ...] (GeoJSON format)
     cultivation_date: date
     harvest_date: date
 
@@ -484,6 +501,23 @@ async def generate_heatmap(request: HeatmapRequest):
                 "dark_green_mask_base64": mask_to_base64(ndre_dark_green_mask)
             }
 
+        # --- Optional: Run crop health analysis if dates provided ---
+        anomaly_data = None
+        if request.cultivation_date and request.harvest_date:
+            try:
+                logger.info("Running crop health analysis...")
+                # Pass coordinates as [lon, lat] — GEE expects this format
+                anomaly_data = analyze_crop_health(
+                    geometry=request.coordinates,
+                    cultivation_date=request.cultivation_date,
+                    harvest_date=request.harvest_date
+                )
+                logger.info(f"✅ Crop health analysis complete")
+            except Exception as e:
+                logger.warning(f"⚠️  Crop health analysis failed (non-blocking): {e}")
+                # Don't fail the entire request if analysis fails
+                anomaly_data = None
+
         response = {
             "predicted_yield": predicted_yield,
             "old_yield": old_yield,
@@ -505,7 +539,14 @@ async def generate_heatmap(request: HeatmapRequest):
             "thresholds": {"t1": request.t1, "t2": request.t2},
             "suggestions": suggestions
         }
+        
+        # Add anomaly analysis if available
+        if anomaly_data:
+            response["anomaly"] = anomaly_data
 
+        # Sanitize response to remove inf/-inf/nan values that break JSON serialization
+        response = sanitize_json_response(response)
+        
         return JSONResponse(content=response)
 
     except HTTPException:
@@ -572,7 +613,7 @@ async def analyze_crop_health_api(request: CropHealthRequest):
     - Summary statistics and caching for performance
     
     Args:
-        geometry: List of [latitude, longitude] pairs forming a polygon
+        geometry: List of [longitude, latitude] pairs forming a polygon (GeoJSON format)
         cultivation_date: Crop cultivation start date (YYYY-MM-DD)
         harvest_date: Crop harvest date (YYYY-MM-DD)
     
