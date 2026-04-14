@@ -557,6 +557,208 @@ async def generate_heatmap(request: HeatmapRequest):
         raise HTTPException(status_code=500, detail=f"Heatmap generation failed: {str(e)}")
 
 
+@app.post("/generate_heatmap_lite")
+async def generate_heatmap_lite(request: HeatmapRequest):
+    """
+    Lightweight heatmap generation without ML model inference or sensor data.
+    Uses historical yield from CSV as predicted yield.
+    Same request/response format as /generate_heatmap.
+    """
+    # --- Check GEE initialized ---
+    if not gee_status:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize Google Earth Engine: {gee_error}")
+
+    try:
+        # --- Get corresponding date ---
+        date_str = get_corresponding_date()
+        logging.info(f"[lite] Using date: {date_str}")
+
+        # --- Generate NDVI data only (skip sensor) ---
+        geojson_dict = {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [request.coordinates]
+            }
+        }
+
+        ndvi_data, _, sat_image = merged_processor.generate_ndvi_and_sensor_npy(
+            geojson_dict, date_str, skip_sensor=True
+        )
+
+        if ndvi_data is None:
+            raise HTTPException(status_code=400, detail="Failed to generate NDVI data from coordinates")
+
+        # --- Get location and old yield (no model prediction) ---
+        centroid_lat, centroid_lon = merged_processor.get_centroid_coordinates(geojson_dict)
+        yield_df = merged_processor.load_yield_data()
+
+        location_info = {
+            "district": "unknown",
+            "coordinates": {"latitude": None, "longitude": None},
+            "complete_address": "Location not available"
+        }
+        old_yield = 1.0
+        predicted_yield = 1.0
+        yield_ratio = 1.0
+        growth_percentage = 0.0
+
+        if centroid_lat is not None and centroid_lon is not None:
+            district, complete_location = merged_processor.get_district_and_location_sync(centroid_lat, centroid_lon)
+            old_yield = merged_processor.get_old_yield_for_district(district, yield_df)
+            predicted_yield = old_yield  # No model — use old yield as predicted
+
+            location_info = {
+                "district": district,
+                "coordinates": {"latitude": centroid_lat, "longitude": centroid_lon},
+                "complete_address": complete_location
+            }
+
+            final_ndvi_data, yield_ratio = merged_processor.compare_yields_and_adjust_ndvi(
+                ndvi_data, predicted_yield, old_yield
+            )
+
+            growth_percentage = ((predicted_yield - old_yield) / old_yield) * 100 if old_yield > 0 else 0.0
+            logger.info(f"[lite] District: {district}, Old yield: {old_yield}, Predicted yield: {predicted_yield}")
+        else:
+            final_ndvi_data = ndvi_data
+            logger.warning("[lite] Could not get district information, using original NDVI data")
+
+        # --- Generate separate heatmap masks ---
+        red_mask, yellow_mask, green_mask, pixel_counts = merged_processor.create_separate_yield_masks(
+            final_ndvi_data, predicted_yield, request.t1, request.t2
+        )
+
+        if red_mask is None or yellow_mask is None or green_mask is None:
+            raise HTTPException(status_code=500, detail="Failed to generate heatmap masks")
+
+        # --- Apply pixel-based multiplier to yields ---
+        green_pixels = pixel_counts.get("green", 0)
+        yellow_pixels = pixel_counts.get("yellow", 0)
+        red_pixels = pixel_counts.get("red", 0)
+        valid_pixels = pixel_counts.get("valid", green_pixels + yellow_pixels + red_pixels)
+        multiplier = (green_pixels + 0.5 * yellow_pixels) / valid_pixels if valid_pixels > 0 else 0
+
+        old_yield = old_yield * multiplier
+        predicted_yield = predicted_yield * multiplier
+
+        logger.info(f"[lite] Applied multiplier: {multiplier:.4f} (green={green_pixels}, yellow={yellow_pixels})")
+
+        # --- Generate farmer suggestions (sensor_data=None handled gracefully) ---
+        suggestions = merged_processor.generate_farmer_suggestions(
+            predicted_yield=predicted_yield,
+            old_yield=old_yield,
+            pixel_counts=pixel_counts,
+            sensor_data=None,
+            location_info=location_info,
+            thresholds={"t1": request.t1, "t2": request.t2}
+        )
+
+        # --- Convert each mask to PNG base64 ---
+        import PIL.Image
+
+        def mask_to_base64(mask_array):
+            img = PIL.Image.fromarray(mask_array, "RGBA")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            png_bytes = buf.read()
+            return base64.b64encode(png_bytes).decode('ascii')
+
+        red_base64 = mask_to_base64(red_mask)
+        yellow_base64 = mask_to_base64(yellow_mask)
+        green_base64 = mask_to_base64(green_mask)
+
+        # --- Generate NDWI data and masks ---
+        logger.info("[lite] Calculating NDWI...")
+        ndwi_result = utils.crop_health_gee.fetch_ndwi_for_date(request.coordinates, date_str, sat_image)
+        ndwi_masks_response = {}
+        if ndwi_result is not None:
+            ndwi_values = ndwi_result["raster"].astype(np.float32)
+            ndwi_brown_mask, ndwi_yellow_mask, ndwi_light_blue_mask, ndwi_pixel_counts = merged_processor.create_separate_ndwi_masks(
+                ndwi_values
+            )
+            if ndwi_brown_mask is not None:
+                ndwi_masks_response = {
+                    "brown_mask_base64": mask_to_base64(ndwi_brown_mask),
+                    "yellow_mask_base64": mask_to_base64(ndwi_yellow_mask),
+                    "light_blue_mask_base64": mask_to_base64(ndwi_light_blue_mask)
+                }
+
+        # --- Generate NDRE data and masks ---
+        logger.info("[lite] Calculating NDRE...")
+        ndre_result = utils.crop_health_gee.fetch_ndre_for_date(request.coordinates, date_str, sat_image)
+        ndre_masks_response = {}
+        if ndre_result is not None:
+            ndre_values = ndre_result["raster"].astype(np.float32)
+            ndre_purple_mask, ndre_pink_mask, ndre_light_green_mask, ndre_dark_green_mask, ndre_pixel_counts = merged_processor.create_separate_ndre_masks(
+                ndre_values
+            )
+            if ndre_purple_mask is not None:
+                ndre_masks_response = {
+                    "purple_mask_base64": mask_to_base64(ndre_purple_mask),
+                    "pink_mask_base64": mask_to_base64(ndre_pink_mask),
+                    "light_green_mask_base64": mask_to_base64(ndre_light_green_mask),
+                    "dark_green_mask_base64": mask_to_base64(ndre_dark_green_mask)
+                }
+
+        # --- Optional: Run crop health analysis if dates provided ---
+        anomaly_data = None
+        if request.cultivation_date and request.harvest_date:
+            try:
+                logger.info("[lite] Running crop health analysis...")
+                anomaly_data = analyze_crop_health(
+                    geometry=request.coordinates,
+                    cultivation_date=request.cultivation_date,
+                    harvest_date=request.harvest_date
+                )
+                logger.info(f"[lite] ✅ Crop health analysis complete")
+            except Exception as e:
+                logger.warning(f"[lite] ⚠️  Crop health analysis failed (non-blocking): {e}")
+                anomaly_data = None
+
+        trimmed_pixel_counts = {
+            k: v for k, v in pixel_counts.items()
+            if k not in ("transparent", "total_field")
+        }
+        trimmed_suggestions = {
+            k: v for k, v in (suggestions or {}).items()
+            if k not in ("yield_analysis", "risk_alerts")
+        }
+
+        response = {
+            "predicted_yield": predicted_yield,
+            "old_yield": old_yield,
+            "growth": {
+                "percentage": growth_percentage
+            },
+            "masks": {
+                "red_mask_base64": red_base64,
+                "yellow_mask_base64": yellow_base64,
+                "green_mask_base64": green_base64
+            },
+            "ndwi-masks": ndwi_masks_response,
+            "ndre-masks": ndre_masks_response,
+            "pixel_counts": trimmed_pixel_counts,
+            "suggestions": trimmed_suggestions
+        }
+
+        if anomaly_data:
+            response["anomaly"] = anomaly_data
+
+        response = sanitize_json_response(response)
+
+        return JSONResponse(content=response)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"[lite] Heatmap generation error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Heatmap generation failed: {str(e)}")
+
+
 @app.post("/export_arrays")
 async def export_arrays(request: HeatmapRequest):
     """

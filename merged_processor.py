@@ -750,7 +750,7 @@ def combine_ndvi_sensor_data(ndvi_data, sensor_data):
         logger.error(f"Error combining and processing data: {e}")
         return None
 
-def generate_ndvi_and_sensor_npy(geojson_feature, date_str="2018-10-01"):
+def generate_ndvi_and_sensor_npy(geojson_feature, date_str="2018-10-01", skip_sensor=False):
     """Generate NDVI and Sensor .npy data in memory from GeoJSON feature"""
     try:
         logger.info("Generating NDVI and Sensor data from GeoJSON...")
@@ -811,6 +811,11 @@ def generate_ndvi_and_sensor_npy(geojson_feature, date_str="2018-10-01"):
             ndvi_values = ndvi_values.astype(np.float32)
 
         # Get sensor data (now using only first band per sensor)
+        if skip_sensor:
+            logger.info("Skipping sensor data fetch (skip_sensor=True)")
+            logger.info(f"✅ Successfully generated NDVI data with shape: {ndvi_values.shape}")
+            return ndvi_values, None, image
+
         logger.info("Fetching sensor data...")
         sensor_image = get_sensor_data(polygon)
         if sensor_image is None:

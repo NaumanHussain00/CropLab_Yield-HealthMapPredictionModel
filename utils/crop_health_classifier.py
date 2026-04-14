@@ -193,7 +193,6 @@ def generate_tile_urls(
             ndvi_normalized = np.clip((current_ndvi - ndvi_min) / (ndvi_max - ndvi_min + 1e-6), 0, 1)
 
         ndvi_rgb = ndvi_to_rgb(ndvi_normalized)
-        ndvi_rgb = _pad_to_square(ndvi_rgb)
 
         ndvi_img = Image.fromarray(ndvi_rgb, 'RGB')
         ndvi_buffer = io.BytesIO()
@@ -229,7 +228,6 @@ def generate_tile_urls(
                 logger.info(f"  Using range normalization: [{p2:.4f}, {p98:.4f}] → [blue, red]")
 
         anomaly_rgba = anomaly_to_rgba(anomaly_normalized, valid_pixel_mask)
-        anomaly_rgba = _pad_to_square(anomaly_rgba)
 
         anomaly_img = Image.fromarray(anomaly_rgba, 'RGBA')
         anomaly_buffer = io.BytesIO()
@@ -243,23 +241,6 @@ def generate_tile_urls(
         logger.error(f"Error generating tiles: {e}")
         return {"error": str(e)}
 
-
-def _pad_to_square(arr: np.ndarray) -> np.ndarray:
-    """Pad image array to square with minimum 256px, center-padded with black/transparent."""
-    height, width = arr.shape[:2]
-    max_dim = max(height, width)
-    target_size = max(256, max_dim)
-
-    if height != width:
-        pad_h = target_size - height
-        pad_w = target_size - width
-        padding = ((pad_h // 2, pad_h - pad_h // 2), (pad_w // 2, pad_w - pad_w // 2), (0, 0))
-        arr = np.pad(arr, padding, mode='constant', constant_values=0)
-    elif max_dim < target_size:
-        scale = target_size // max_dim
-        arr = np.repeat(np.repeat(arr, scale, axis=0), scale, axis=1)
-
-    return arr
 
 
 def ndvi_to_rgb(ndvi_normalized: np.ndarray) -> np.ndarray:

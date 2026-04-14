@@ -1,0 +1,242 @@
+{
+  "created": 1627939168,
+  "updated": 1776092505,
+  "created_date": "2021-08-02T21:19:28Z",
+  "updated_date": "2026-04-13T15:01:45Z",
+  "active": "1",
+  "index_name": "9ef84268-d588-465a-a308-a864a43d0070",
+  "org": [
+    "Ministry of Agriculture and Farmers Welfare",
+    "Department of Agriculture and Farmers Welfare"
+  ],
+  "org_type": "Central",
+  "source": "data.gov.in",
+  "title": "Current Daily Price of Various Commodities from Various Markets (Mandi)",
+  "external_ws_url": "",
+  "visualizable": "1",
+  "field": [
+    {
+      "name": "State",
+      "id": "state",
+      "type": "keyword"
+    },
+    {
+      "name": "District",
+      "id": "district",
+      "type": "keyword"
+    },
+    {
+      "name": "Market",
+      "id": "market",
+      "type": "keyword"
+    },
+    {
+      "name": "Commodity",
+      "id": "commodity",
+      "type": "keyword"
+    },
+    {
+      "name": "Variety",
+      "id": "variety",
+      "type": "keyword"
+    },
+    {
+      "name": "Grade",
+      "id": "grade",
+      "type": "keyword"
+    },
+    {
+      "name": "Arrival_Date",
+      "id": "arrival_date",
+      "type": "date"
+    },
+    {
+      "name": "Min_x0020_Price",
+      "id": "min_price",
+      "type": "double"
+    },
+    {
+      "name": "Max_x0020_Price",
+      "id": "max_price",
+      "type": "double"
+    },
+    {
+      "name": "Modal_x0020_Price",
+      "id": "modal_price",
+      "type": "double"
+    }
+  ],
+  "external_ws": 0,
+  "catalog_uuid": "6141ea17-a69d-4713-b600-0a43c8fd9a6c",
+  "sector": [
+    "Agriculture",
+    "Agricultural Marketing"
+  ],
+  "target_bucket": {
+    "field": "9ef84268-d588-465a-a308-a864a43d0070",
+    "index": "daily_mandi_price",
+    "type": "6141ea17-a69d-4713-b600-0a43c8fd9a6c"
+  },
+  "desc": "Current Daily Price of Various Commodities from Various Markets (Mandi)",
+  "field_exposed": [
+    {
+      "name": "State",
+      "id": "state.keyword",
+      "type": "keyword"
+    },
+    {
+      "name": "District",
+      "id": "district",
+      "type": "keyword"
+    },
+    {
+      "name": "Market",
+      "id": "market",
+      "type": "keyword"
+    },
+    {
+      "name": "Commodity",
+      "id": "commodity",
+      "type": "keyword"
+    },
+    {
+      "name": "Variety",
+      "id": "variety",
+      "type": "keyword"
+    },
+    {
+      "name": "Grade",
+      "id": "grade",
+      "type": "keyword"
+    }
+  ],
+  "message": "Resource lists",
+  "version": "2.2.0",
+  "status": "ok",
+  "total": 3760,
+  "count": 10,
+  "limit": "10",
+  "offset": "0",
+  "records": [
+    {
+      "state": "Uttar Pradesh",
+      "district": "Agra",
+      "market": "Achnera APMC",
+      "commodity": "Wheat",
+      "variety": "Local",
+      "grade": "FAQ",
+      "arrival_date": "13/04/2026",
+      "min_price": 2325,
+      "max_price": 2325,
+      "modal_price": 2325
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Agra",
+      "market": "Achnera APMC",
+      "commodity": "Tomato",
+      "variety": "Other",
+      "grade": "FAQ",
+      "arrival_date": "13/04/2026",
+      "min_price": 1000,
+      "max_price": 1000,
+      "modal_price": 1000
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Agra",
+      "market": "Achnera APMC",
+      "commodity": "Wheat",
+      "variety": "Dara",
+      "grade": "FAQ",
+      "arrival_date": "13/04/2026",
+      "min_price": 2325,
+      "max_price": 2591,
+      "modal_price": 2410.96
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Mirzapur",
+      "market": "Ahirora APMC",
+      "commodity": "Bhindi(Ladies Finger)",
+      "variety": "Bhindi",
+      "grade": "Medium",
+      "arrival_date": "13/04/2026",
+      "min_price": 2400,
+      "max_price": 2500,
+      "modal_price": 2500
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Mirzapur",
+      "market": "Ahirora APMC",
+      "commodity": "Green Chilli",
+      "variety": "Green Chilly",
+      "grade": "Medium",
+      "arrival_date": "13/04/2026",
+      "min_price": 1500,
+      "max_price": 2000,
+      "modal_price": 2000
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Mirzapur",
+      "market": "Ahirora APMC",
+      "commodity": "Cauliflower",
+      "variety": "Cauliflower",
+      "grade": "Medium",
+      "arrival_date": "13/04/2026",
+      "min_price": 1400,
+      "max_price": 1600,
+      "modal_price": 1500
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Mirzapur",
+      "market": "Ahirora APMC",
+      "commodity": "Paddy(Common)",
+      "variety": "Common",
+      "grade": "FAQ",
+      "arrival_date": "13/04/2026",
+      "min_price": 2400,
+      "max_price": 2400,
+      "modal_price": 2400
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Mahoba",
+      "market": "Panwari APMC",
+      "commodity": "Wood",
+      "variety": "Other",
+      "grade": "FAQ",
+      "arrival_date": "13/04/2026",
+      "min_price": 510,
+      "max_price": 510,
+      "modal_price": 510
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Etah",
+      "market": "Aliganj APMC",
+      "commodity": "Tobacco",
+      "variety": "Other",
+      "grade": "FAQ",
+      "arrival_date": "13/04/2026",
+      "min_price": 1200,
+      "max_price": 2010,
+      "modal_price": 1413.9100000000001
+    },
+    {
+      "state": "Uttar Pradesh",
+      "district": "Sitapur",
+      "market": "Sidhauli APMC",
+      "commodity": "Wood",
+      "variety": "Other",
+      "grade": "FAQ",
+      "arrival_date": "13/04/2026",
+      "min_price": 450,
+      "max_price": 540,
+      "modal_price": 473.43000000000001
+    }
+  ]
+}

@@ -1,0 +1,136 @@
+{
+  "status": "ok",
+  "totalResults": 10,
+  "articles": [
+    {
+      "source": {
+        "id": null,
+        "name": "BusinessLine"
+      },
+      "author": "PTI",
+      "title": "Unseasonal rains damage rabi crops on 2.49 lakh ha, wheat most affected: Agri Minister",
+      "description": "IMD forecasts more rain from April 9-15 due to Western Disturbances over Jammu & Kashmir, cyclonic circulations over Uttar Pradesh, Bangladesh, Assam and Odisha, and associated troughs",
+      "url": "https://www.thehindubusinessline.com/economy/agri-business/unseasonal-rains-damage-rabi-crops-on-249-lakh-ha-wheat-most-affected-agri-minister/article70846599.ece",
+      "urlToImage": "https://bl-i.thgim.com/public/incoming/nhr5q1/article70846642.ece/alternates/LANDSCAPE_1200/PTI04_08_2026_000401A.jpg",
+      "publishedAt": "2026-04-10T08:46:08Z",
+      "content": "Agriculture Minister Shivraj Singh Chouhan on Friday said unseasonal rains and hailstorms have damaged standing rabi crops across 2.49 lakh hectares so far, with wheat bearing the brunt and assessmen… [+2477 chars]"
+    },
+    {
+      "source": {
+        "id": null,
+        "name": "BusinessLine"
+      },
+      "author": "Prabhudatta  Mishra",
+      "title": "Unseasonal rain, hailstorms, may drag Indian wheat output by over 5%",
+      "description": "Unseasonal rains and hailstorms affect wheat production in 111 districts, prompting government procurement targets for Central Pool stock.",
+      "url": "https://www.thehindubusinessline.com/economy/agri-business/the-government-targets-to-buy-30336-lakh-tonnes-lt-of-wheat-for-the-central-pool-stock-by-june-30/article70843422.ece",
+      "urlToImage": "https://bl-i.thgim.com/public/incoming/4gtv29/article70843643.ece/alternates/LANDSCAPE_1200/PTI04_08_2026_000401A.jpg",
+      "publishedAt": "2026-04-09T14:44:16Z",
+      "content": "Unseasonal rain and hailstorms in March and April have impacted wheat crops across 111 districts in nine States, leading to an estimated 5-10 per cent drop in overall production. Agriwatch, in a repo… [+2529 chars]"
+    },
+    {
+      "source": {
+        "id": "the-times-of-india",
+        "name": "The Times of India"
+      },
+      "author": "Ashish Pandey",
+      "title": "West Asia conflict deals a double whammy to India’s farm sector: pre-harvest cost pressures, post-harvest shipping delays",
+      "description": "Supply shocks, export disruptions, and labour shortages caused by the Iran war are beginning to strain India’s agriculture despite ample foodgrain stocks.",
+      "url": "https://economictimes.indiatimes.com/news/economy/agriculture/west-asia-conflict-deals-a-double-whammy-to-indias-farm-sector-pre-harvest-cost-pressures-post-harvest-shipping-delays/articleshow/130126274.cms",
+      "urlToImage": "https://img.etimg.com/thumb/msid-130126275,width-1200,height-630,imgsize-210582,overlay-economictimes/articleshow.jpg",
+      "publishedAt": "2026-04-08T22:46:54Z",
+      "content": "Iran war: Indias agriculture sector is currently facing a double whammy: pre-harvest, it is dealing with rising input costs and labour shortages; and post-harvest, it is facing shipment delays, prima… [+8068 chars]"
+    },
+    {
+      "source": {
+        "id": null,
+        "name": "BusinessLine"
+      },
+      "author": "Prabhudatta  Mishra",
+      "title": "Centre kicks off procurement season with 18,000 tonnes of wheat, targets 303 lakh tonnes",
+      "description": "The Centre initiates wheat procurement season, aiming for 303 lakh tonnes amid low prices and adverse weather concerns.",
+      "url": "https://www.thehindubusinessline.com/economy/agri-business/centre-kicks-off-procurement-season-with-18000-tonnes-of-wheat-targets-303-lakh-tonnes/article70810725.ece",
+      "urlToImage": "https://bl-i.thgim.com/public/incoming/u6yqoc/article70810785.ece/alternates/LANDSCAPE_1200/PTI04_01_2026_000063A.jpg",
+      "publishedAt": "2026-04-01T09:49:39Z",
+      "content": "The government has started the new wheat procurement season from Wednesday with 17,883 tonnes of the grain in its reserve due to permitting early purchase of the grain in some states. As the target i… [+3713 chars]"
+    },
+    {
+      "source": {
+        "id": null,
+        "name": "The Indian Express"
+      },
+      "author": "Express News Service",
+      "title": "Wheat procurement in UP starts today, govt says 3,574 purchase centres already operational",
+      "description": "The drive to continue till June 15; 2.24 lakh farmers already got registered to sell produce, say officials",
+      "url": "https://indianexpress.com/article/cities/lucknow/up-wheat-procurement-msp-hike-farmer-registration-10608814/",
+      "urlToImage": "https://images.indianexpress.com/2026/03/Wheat-cultivation.jpg",
+      "publishedAt": "2026-03-30T02:12:55Z",
+      "content": "Wheat procurement for the 2026 rabi season in Uttar Pradesh will start across the state from Monday, with the government saying it had already made 3,574 procurement centres operational.\r\nThe governm… [+1758 chars]"
+    },
+    {
+      "source": {
+        "id": null,
+        "name": "BusinessLine"
+      },
+      "author": "Prabhudatta  Mishra",
+      "title": "India’s wheat output may drop by over 1% from initial 120 million tonnes estimate, says private survey",
+      "description": "India's wheat output may decline over 1% due to unseasonal rains affecting production in Punjab, Bihar, and Uttar Pradesh.",
+      "url": "https://www.thehindubusinessline.com/economy/agri-business/indias-wheat-output-may-drop-by-over-1-from-initial-120-million-tonnes-estimate-says-private-survey/article70788466.ece",
+      "urlToImage": "https://bl-i.thgim.com/public/incoming/1zrflm/article70788885.ece/alternates/LANDSCAPE_1200/PTI03_25_2026_000188A.jpg",
+      "publishedAt": "2026-03-26T14:22:57Z",
+      "content": "Four districts in three States Punjab, Bihar and Uttar Pradesh are likely to lose 10-15 per cent of their wheat production due to unseasonal rainfall, according to a preliminary report by private age… [+3271 chars]"
+    },
+    {
+      "source": {
+        "id": null,
+        "name": "BusinessLine"
+      },
+      "author": "Prabhudatta  Mishra",
+      "title": "India’s wheat output may be hit in Punjab, Haryana & UP due to unseasonal rain",
+      "description": "Unseasonal rains in India may cause 6-8% wheat crop loss in Punjab, Haryana, and UP, impacting quality and market prices.",
+      "url": "https://www.thehindubusinessline.com/economy/agri-business/indias-wheat-output-may-be-hit-in-punjab-haryana-up-due-to-unseasonal-rain/article70776461.ece",
+      "urlToImage": "https://bl-i.thgim.com/public/incoming/gvsso9/article70776572.ece/alternates/LANDSCAPE_1200/2025-01-16T152419Z_745378035_RC2DU9A6M0YI_RTRMADP_3_BUNGE-GLOBAL-M-A-VITERRA-CANADA.JPG",
+      "publishedAt": "2026-03-23T15:20:24Z",
+      "content": "Some of the wheat-growing States may experience 6-8 per cent crop loss, even as the Indian government is yet to get reports on the damage to crops from recent unseasonal rains and hailstorms in diffe… [+2414 chars]"
+    },
+    {
+      "source": {
+        "id": null,
+        "name": "The Indian Express"
+      },
+      "author": "Maulshree Seth",
+      "title": "UP hikes wheat MSP by Rs 160; procurement from March 30",
+      "description": "Cabinet approves setting up of 20 MW floating solar power plant in Gorakhpur",
+      "url": "https://indianexpress.com/article/cities/lucknow/up-hikes-wheat-msp-by-rs-160-procurement-from-march-30-10597031/",
+      "urlToImage": "https://images.indianexpress.com/2026/03/Yogi_59b774.jpg",
+      "publishedAt": "2026-03-23T13:56:53Z",
+      "content": "The Uttar Pradesh government on Monday announced a hike of Rs 160 per quintal in the minimum support price (MSP) for wheat, setting it at Rs 2,585 per quintal for the 2026 procurement season as again… [+2470 chars]"
+    },
+    {
+      "source": {
+        "id": null,
+        "name": "The Indian Express"
+      },
+      "author": "Maulshree Seth",
+      "title": "IMD issues red, orange alerts for many UP districts, Yogi orders crop damage assessment",
+      "description": "Experts warned of extensive damage to standing crops, particularly wheat, due to strong winds.",
+      "url": "https://indianexpress.com/article/cities/lucknow/imd-issues-red-orange-alerts-for-many-up-districts-10593338/",
+      "urlToImage": "https://images.indianexpress.com/2026/03/Lucknow-weather.jpg",
+      "publishedAt": "2026-03-21T02:02:50Z",
+      "content": "The India Meteorological Department (IMD) has issued red and orange alerts for several districts of Uttar Pradesh, warning of thunderstorms, lightning, gusty winds and isolated incidents of hailstorm… [+2476 chars]"
+    },
+    {
+      "source": {
+        "id": null,
+        "name": "Livemint"
+      },
+      "author": "Sayantan Bera",
+      "title": "From Buddha rice to zero-pesticide chana: How farmer-run companies are finding their edge",
+      "description": "Tired of being at the mercy of traders, some small farmers are flipping the script. Through farmer producer organizations and niche produce, they’re evolving from price-takers into savvy board members. Discover the grit behind India’s agrarian business revolu…",
+      "url": "https://www.livemint.com/industry/agriculture/india-farmer-producer-organizations-fpo-success-stories-11773655634024.html",
+      "urlToImage": "https://www.livemint.com/lm-img/img/2026/03/16/1600x900/logo/Ram_Rahim_Dewas_1773656501416_1773656511487_1773656562366.JPG",
+      "publishedAt": "2026-03-16T11:30:40Z",
+      "content": "The farmer producer organization (FPO) that Karma has been a part of since its inception is Ram Rahim Pragati Producer Co. Ltd. In 2024-25, the 6,000-member strong FPO clocked a turnover of nearly 16… [+12750 chars]"
+    }
+  ]
+}

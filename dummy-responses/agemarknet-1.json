@@ -1,0 +1,64 @@
+{
+  "success": true,
+  "message": "Data fetched successfully.",
+  "title": "District-wise Wholesale Prices Monthly Analysis for Wheat in Kerala - April, 2023",
+  "data": [
+    {
+      "key": "region_info",
+      "columns": [
+        {
+          "key": "district",
+          "title": "District"
+        }
+      ]
+    },
+    {
+      "key": "prices",
+      "columns": [
+        {
+          "key": "prices_april_2023",
+          "title": "Prices April, 2023 (Rs./Quintal)"
+        },
+        {
+          "key": "prices_march_2023",
+          "title": "Prices March, 2023 (Rs./Quintal)"
+        },
+        {
+          "key": "prices_april_2022",
+          "title": "Prices April, 2022 (Rs./Quintal)"
+        }
+      ]
+    },
+    {
+      "key": "percentage_change",
+      "columns": [
+        {
+          "key": "change_over_previous_month",
+          "title": "Change (Over Previous Month)"
+        },
+        {
+          "key": "change_over_previous_year",
+          "title": "Change (Over Previous Year)"
+        }
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "district": "Alappuzha",
+      "prices_april_2023": 2187.5,
+      "prices_march_2023": 2159.24,
+      "prices_april_2022": 2100.0,
+      "change_over_previous_month": "1.3",
+      "change_over_previous_year": "4.2"
+    }
+  ],
+  "average": {
+    "district": "Average",
+    "prices_april_2023": 2187.5,
+    "prices_march_2023": 2159.24,
+    "prices_april_2022": 2100.0,
+    "change_over_previous_month": null,
+    "change_over_previous_year": null
+  }
+}
