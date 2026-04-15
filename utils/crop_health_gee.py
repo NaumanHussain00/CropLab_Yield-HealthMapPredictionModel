@@ -1,6 +1,7 @@
 import ee
 import numpy as np
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 
@@ -196,18 +197,25 @@ def fetch_all_ndvi(geometry: list, dates: list) -> Dict[str, Any]:
         }
     """
     logger.info("=" * 60)
-    logger.info("Fetching NDVI rasters with progressive retry strategy...")
+    logger.info("Fetching NDVI rasters in parallel (progressive retry per date)...")
     logger.info("Strategy: 7d window (20% cloud) → 15d window → 30d window → 40% cloud threshold")
-    
-    results = []
-    for i, date_str in enumerate(dates):
-        logger.info(f"\n[{i+1}/3] Fetching for {date_str}...")
-        result = fetch_ndvi_for_date(geometry, date_str)
-        results.append(result)
-        if result:
-            logger.info(f"✅ Success for {date_str}")
-        else:
-            logger.warning(f"❌ Failed for {date_str}")
+
+    def _fetch_one(idx_date):
+        i, date_str = idx_date
+        logger.info(f"[{i+1}/{len(dates)}] Starting fetch for {date_str}...")
+        try:
+            result = fetch_ndvi_for_date(geometry, date_str)
+            if result:
+                logger.info(f"✅ Success for {date_str}")
+            else:
+                logger.warning(f"❌ Failed for {date_str}")
+            return result
+        except Exception as e:
+            logger.error(f"❌ Exception fetching {date_str}: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=len(dates)) as executor:
+        results = list(executor.map(_fetch_one, list(enumerate(dates))))
     
     available = [r for r in results if r is not None]
     

@@ -210,47 +210,42 @@ def get_district_and_location_sync(lat, lon):
         return 'agra', 'Location not available'  # Default fallback
 
 def get_district_and_location_sync(lat, lon):
-    """Get both district and complete location information from coordinates"""
+    """Reverse-geocode coords to (district, state, complete_location)."""
     try:
         logger.info(f"Getting district and location for coordinates: {lat}, {lon}")
-        
+
         url = f"https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat={lat}&lon={lon}"
-        
-        headers = {
-            'User-Agent': 'AgriProject/1.0'  # Required by Nominatim API
-        }
-        
+        headers = {'User-Agent': 'AgriProject/1.0'}
+
         response = requests.get(url, headers=headers, timeout=5)
-        
+
         if response.status_code == 200:
             data = response.json()
             logger.info(f"Response: {data}")
-            
-            # Extract district from address details
+
             address = data.get('address', {})
             district = address.get('state_district') or address.get('county') or address.get('district') or 'agra'
-            
-            # Get complete display name
+            state = address.get('state') or None
             complete_location = data.get('display_name', 'Location not available')
-            
-            logger.info(f"Detected district: {district}")
+
+            logger.info(f"Detected district: {district}, state: {state}")
             logger.info(f"Complete location: {complete_location}")
-            
-            return district.lower(), complete_location
+
+            return district.lower(), state, complete_location
         else:
             logger.warning(f"Failed to get location data: {response.status_code}")
-            return 'agra', 'Location not available'  # Default fallback
-            
+            return 'agra', None, 'Location not available'
+
     except Exception as e:
         logger.error(f"Error getting district and location: {e}")
-        return 'agra', 'Location not available'  # Default fallback
+        return 'agra', None, 'Location not available'
 
 def load_yield_data(csv_path='district_yield.csv'):
     """Load yield data from CSV file"""
     try:
         if os.path.exists(csv_path):
             df = pd.read_csv(csv_path)
-            logger.info(f"Loaded yield data with {len(df)} districts")
+            logger.debug(f"Loaded yield data with {len(df)} districts")
             return df
         else:
             logger.error(f"Yield CSV file not found: {csv_path}")
@@ -1222,7 +1217,7 @@ def create_separate_ndre_masks(ndre_data):
         logger.error(f"Error creating NDRE masks: {e}")
         return None, None, None, None, {}
 
-def generate_farmer_suggestions(predicted_yield, old_yield, pixel_counts, sensor_data, location_info, thresholds):
+# def generate_farmer_suggestions(predicted_yield, old_yield, pixel_counts, sensor_data, location_info, thresholds):
     """
     Generate simple and easy-to-understand farming suggestions
     based on yield, NDVI colors, soil data, and location.
