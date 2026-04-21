@@ -13,6 +13,10 @@ import numpy as np
 import io
 import base64
 import logging
+import os
+import json
+import requests
+import re
 import merged_processor
 import utils.crop_health_gee
 from utils.crop_health_analyzer import analyze_crop_health
@@ -85,6 +89,341 @@ def sanitize_json_response(obj):
         return sanitize_json_response(obj.tolist())
     else:
         return obj
+
+
+def _safe_pct(numerator, denominator):
+    if denominator is None or denominator <= 0:
+        return 0.0
+    return round((float(numerator) / float(denominator)) * 100.0, 2)
+
+
+def _safe_float(value, default=0.0):
+    try:
+        if value is None:
+            return float(default)
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _derive_priority(risk_score):
+    if risk_score >= 35:
+        return "High"
+    if risk_score >= 15:
+        return "Medium"
+    return "Low"
+
+
+def _derive_overall_health(risk_score):
+    if risk_score > 50:
+        return "Critical"
+    if risk_score > 35:
+        return "Poor"
+    if risk_score > 20:
+        return "Moderate"
+    if risk_score > 10:
+        return "Good"
+    return "Excellent"
+
+
+def _build_fallback_ai_analysis(metrics):
+    ndvi = metrics.get("ndvi", {})
+    ndwi = metrics.get("ndwi", {})
+    ndre = metrics.get("ndre", {})
+    anomaly = metrics.get("anomaly", {})
+
+    ndvi_red = float(ndvi.get("red_pct", 0.0))
+    ndvi_yellow = float(ndvi.get("yellow_pct", 0.0))
+    ndwi_low = float(ndwi.get("low_water_area_pct", 0.0))
+    ndre_low = float(ndre.get("low_nitrogen_area_pct", 0.0))
+    anomaly_neg = float(anomaly.get("negative_anomaly_pct", 0.0))
+
+    risk_score = round(
+        0.35 * ndvi_red
+        + 0.20 * ndvi_yellow
+        + 0.20 * ndwi_low
+        + 0.15 * ndre_low
+        + 0.10 * anomaly_neg,
+        2,
+    )
+
+    overall_health = _derive_overall_health(risk_score)
+    priority = _derive_priority(risk_score)
+
+    issues = []
+    if ndwi_low > 0:
+        issues.append({
+            "id": "water_stress",
+            "name": "Water stress",
+            "affected_area_pct": round(ndwi_low, 2),
+            "priority": "High" if ndwi_low >= 20 else "Medium",
+        })
+    if ndre_low > 0:
+        issues.append({
+            "id": "nitrogen_deficiency",
+            "name": "Nitrogen deficiency",
+            "affected_area_pct": round(ndre_low, 2),
+            "priority": "High" if ndre_low >= 25 else "Medium",
+        })
+    if anomaly_neg > 0:
+        issues.append({
+            "id": "underperforming_zones",
+            "name": "Underperforming zones",
+            "affected_area_pct": round(anomaly_neg, 2),
+            "priority": "High" if anomaly_neg >= 20 else "Medium",
+        })
+
+    if not issues:
+        issues.append({
+            "id": "no_major_issue_detected",
+            "name": "No major issue detected",
+            "affected_area_pct": 0,
+            "priority": "Low",
+        })
+
+    return {
+        "summary": "Crop is mostly healthy but early-stage water and nutrient stress detected in specific zones." if risk_score >= 10 else "Crop condition is stable with low stress signals.",
+        "overall_health": overall_health,
+        "confidence": "High",
+        "risk_score": risk_score,
+        "priority": priority,
+        "issues": issues,
+        "why_happening": [
+            "Uneven irrigation or high evapotranspiration",
+            "Insufficient nitrogen availability",
+            "Combined stress causing anomaly",
+        ],
+        "immediate_actions": [
+            "Fix irrigation in stressed zones within 3 days",
+            "Apply nitrogen fertilizer in low-NDRE areas",
+            "Monitor affected zones weekly",
+        ],
+        "monitor_next": [
+            "NDWI trend",
+            "NDRE recovery",
+            "Anomaly reduction",
+        ],
+        "risk_if_ignored": "Stress zones may expand and reduce crop productivity.",
+        "simple_advice": {
+            "en": "Some zones show early water and nitrogen stress. Address these zones quickly to avoid yield loss.",
+            "hi": "Kuch hisson me paani aur nitrogen ki kami hai. Un par turant dhyaan dena zaroori hai.",
+        },
+    }
+
+
+def _normalize_ai_analysis(ai_result, metrics):
+    base = _build_fallback_ai_analysis(metrics)
+
+    if not isinstance(ai_result, dict):
+        return base
+
+    risk_score = _safe_float(ai_result.get("risk_score"), base["risk_score"])
+    # Some models return 0-1 instead of 0-100.
+    if 0.0 <= risk_score <= 1.0:
+        risk_score *= 100.0
+    risk_score = round(max(0.0, min(100.0, risk_score)), 2)
+
+    summary = str(ai_result.get("summary") or base["summary"]).strip()
+    confidence_raw = str(ai_result.get("confidence") or base["confidence"]).strip().capitalize()
+    confidence = confidence_raw if confidence_raw in ("Low", "Medium", "High") else base["confidence"]
+
+    issues_raw = ai_result.get("issues") if isinstance(ai_result.get("issues"), list) else []
+    normalized_issues = []
+    for index, issue in enumerate(issues_raw):
+        if not isinstance(issue, dict):
+            continue
+
+        issue_id = str(issue.get("id") or f"issue_{index + 1}").strip()
+        issue_name = str(issue.get("name") or issue_id.replace("_", " ").title()).strip()
+        affected = _safe_float(issue.get("affected_area_pct"), 0.0)
+        if 0.0 <= affected <= 1.0:
+            affected *= 100.0
+        affected = round(max(0.0, min(100.0, affected)), 2)
+
+        normalized_issues.append({
+            "id": issue_id,
+            "name": issue_name,
+            "affected_area_pct": affected,
+            "priority": _derive_priority(affected),
+        })
+
+    if not normalized_issues:
+        normalized_issues = base["issues"]
+
+    def _clean_string_list(value, fallback):
+        if not isinstance(value, list):
+            return fallback
+        out = [str(item).strip() for item in value if str(item).strip()]
+        return out or fallback
+
+    simple_advice_raw = ai_result.get("simple_advice")
+    if not isinstance(simple_advice_raw, dict):
+        simple_advice_raw = {}
+    advice_en = str(simple_advice_raw.get("en") or base["simple_advice"]["en"]).strip()
+    advice_hi = str(simple_advice_raw.get("hi") or base["simple_advice"]["hi"]).strip()
+
+    return {
+        "summary": summary,
+        "overall_health": _derive_overall_health(risk_score),
+        "confidence": confidence,
+        "risk_score": risk_score,
+        "priority": _derive_priority(risk_score),
+        "issues": normalized_issues,
+        "why_happening": _clean_string_list(ai_result.get("why_happening"), base["why_happening"]),
+        "immediate_actions": _clean_string_list(ai_result.get("immediate_actions"), base["immediate_actions"]),
+        "monitor_next": _clean_string_list(ai_result.get("monitor_next"), base["monitor_next"]),
+        "risk_if_ignored": str(ai_result.get("risk_if_ignored") or base["risk_if_ignored"]).strip(),
+        "simple_advice": {
+            "en": advice_en,
+            "hi": advice_hi,
+        },
+    }
+
+
+def _generate_nvidia_ai_analysis(input_payload):
+    nvidia_api_key = os.getenv("NVIDIA_API_KEY")
+    if not nvidia_api_key:
+        raise RuntimeError("NVIDIA_API_KEY is not configured")
+
+    nvidia_model = os.getenv("NVIDIA_MODEL", "meta/llama-4-maverick-17b-128e-instruct").strip()
+    nvidia_url = os.getenv("NVIDIA_API_URL", "https://integrate.api.nvidia.com/v1/chat/completions").strip()
+
+    prompt = (
+        "You are an agricultural AI analyst. Return ONLY valid JSON with the exact schema and key names below."
+        " Do not include markdown or explanation.\n\n"
+        "Schema:\n"
+        "{\n"
+        "  \"summary\": \"string\",\n"
+        "  \"overall_health\": \"Excellent|Good|Moderate|Poor|Critical\",\n"
+        "  \"confidence\": \"Low|Medium|High\",\n"
+        "  \"risk_score\": number,\n"
+        "  \"priority\": \"Low|Medium|High\",\n"
+        "  \"issues\": [{\"id\":\"string\",\"name\":\"string\",\"affected_area_pct\":number,\"priority\":\"Low|Medium|High\"}],\n"
+        "  \"why_happening\": [\"string\"],\n"
+        "  \"immediate_actions\": [\"string\"],\n"
+        "  \"monitor_next\": [\"string\"],\n"
+        "  \"risk_if_ignored\": \"string\",\n"
+        "  \"simple_advice\": {\"en\":\"string\",\"hi\":\"string\"}\n"
+        "}\n\n"
+        "Use only the provided metrics. If uncertain, reduce confidence.\n\n"
+        f"Input:\n{json.dumps(input_payload, ensure_ascii=True)}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {nvidia_api_key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": nvidia_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 700,
+        "temperature": 0.2,
+        "top_p": 1.0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stream": False,
+    }
+
+    required_keys = [
+        "summary",
+        "overall_health",
+        "confidence",
+        "risk_score",
+        "priority",
+        "issues",
+        "why_happening",
+        "immediate_actions",
+        "monitor_next",
+        "risk_if_ignored",
+        "simple_advice",
+    ]
+
+    try:
+        response = requests.post(nvidia_url, headers=headers, json=body, timeout=25)
+        if not response.ok:
+            detail = response.text[:1200].replace("\n", " ")
+            raise RuntimeError(f"NVIDIA HTTP {response.status_code}: {detail}")
+
+        data = response.json()
+        choices = data.get("choices", [])
+        if not choices:
+            raise RuntimeError(f"NVIDIA returned no choices. Response: {json.dumps(data)[:600]}")
+
+        text = choices[0].get("message", {}).get("content", "")
+        if not text:
+            raise RuntimeError(f"NVIDIA returned empty content. Response: {json.dumps(data)[:600]}")
+
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{[\s\S]*\}", text)
+            if not match:
+                raise RuntimeError(f"NVIDIA returned non-JSON text: {text[:400]}")
+            parsed = json.loads(match.group(0))
+
+        missing_keys = [key for key in required_keys if key not in parsed]
+        if missing_keys:
+            raise RuntimeError(
+                f"NVIDIA response missing required keys: {', '.join(missing_keys)}. "
+                f"Response: {json.dumps(parsed)[:500]}"
+            )
+
+        logger.info(f"[lite] AI analysis generated with NVIDIA model: {nvidia_model}")
+        return _normalize_ai_analysis(parsed, input_payload.get("health_metrics", {}))
+    except Exception as exc:
+        raise RuntimeError(f"NVIDIA analysis generation failed: {exc}")
+
+
+def _build_ai_analysis_input(location_info, crop, pixel_counts, ndwi_pixel_counts, ndre_pixel_counts, anomaly_data):
+    ndvi_valid = pixel_counts.get("valid", 0)
+    ndwi_valid = ndwi_pixel_counts.get("valid", 0) if isinstance(ndwi_pixel_counts, dict) else 0
+    ndre_valid = ndre_pixel_counts.get("valid", 0) if isinstance(ndre_pixel_counts, dict) else 0
+
+    ndvi_green_pct = _safe_pct(pixel_counts.get("green", 0), ndvi_valid)
+    ndvi_yellow_pct = _safe_pct(pixel_counts.get("yellow", 0), ndvi_valid)
+    ndvi_red_pct = _safe_pct(pixel_counts.get("red", 0), ndvi_valid)
+
+    low_water_pixels = 0
+    if isinstance(ndwi_pixel_counts, dict):
+        low_water_pixels = ndwi_pixel_counts.get("brown", 0) + ndwi_pixel_counts.get("yellow", 0)
+    low_water_area_pct = _safe_pct(low_water_pixels, ndwi_valid)
+
+    low_nitrogen_pixels = 0
+    if isinstance(ndre_pixel_counts, dict):
+        low_nitrogen_pixels = ndre_pixel_counts.get("purple", 0) + ndre_pixel_counts.get("pink", 0)
+    low_nitrogen_area_pct = _safe_pct(low_nitrogen_pixels, ndre_valid)
+
+    negative_anomaly_pct = 0.0
+    if isinstance(anomaly_data, dict):
+        summary = anomaly_data.get("summary", {})
+        if isinstance(summary, dict):
+            negative_anomaly_pct = round(_safe_float(summary.get("stressed_percent", 0.0), 0.0), 2)
+
+    return {
+        "farm_context": {
+            "crop": crop,
+            "district": location_info.get("district"),
+            "state": location_info.get("state"),
+            "analysis_date": datetime.now().strftime("%Y-%m-%d"),
+        },
+        "health_metrics": {
+            "ndvi": {
+                "green_pct": ndvi_green_pct,
+                "yellow_pct": ndvi_yellow_pct,
+                "red_pct": ndvi_red_pct,
+            },
+            "ndwi": {
+                "low_water_area_pct": low_water_area_pct,
+            },
+            "ndre": {
+                "low_nitrogen_area_pct": low_nitrogen_area_pct,
+            },
+            "anomaly": {
+                "negative_anomaly_pct": negative_anomaly_pct,
+            },
+        },
+    }
 
 class HeatmapRequest(BaseModel):
     coordinates: List[List[float]]  # List of [longitude, latitude] points
@@ -371,6 +710,22 @@ async def generate_heatmap_lite(request: HeatmapRequest):
 
         if anomaly_data:
             response["anomaly"] = anomaly_data
+
+        try:
+            ai_input = _build_ai_analysis_input(
+                location_info=location_info,
+                crop=request.crop,
+                pixel_counts=trimmed_pixel_counts,
+                ndwi_pixel_counts=ndwi_pixel_counts,
+                ndre_pixel_counts=ndre_pixel_counts,
+                anomaly_data=anomaly_data,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"AI input build failed: {exc}")
+        try:
+            response["ai_analysis"] = _generate_nvidia_ai_analysis(ai_input)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}")
 
         response = sanitize_json_response(response)
 
