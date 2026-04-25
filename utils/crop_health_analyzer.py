@@ -1,13 +1,41 @@
-from datetime import date
+from datetime import date, timedelta
 import logging
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 
 from .date_resolver import resolve_reference_date, get_historical_dates
-from .crop_health_gee import fetch_all_ndvi, ServiceError
+from .crop_health_gee import fetch_all_ndvi, fetch_ndvi_for_date, ServiceError
 from .crop_health_classifier import compute_anomaly, classify_pixels, generate_tile_urls
 from .crop_health_stats import compute_summary_stats
 
 logger = logging.getLogger(__name__)
+
+
+def _build_trend_sample_dates(reference_date: date) -> list[date]:
+    """Build a compact 3-year NDVI sampling schedule for UI range filters.
+
+    Compact schedule to reduce GEE calls while keeping representative points
+    for 1M/3M/6M/1Y/3Y windows.
+    """
+    day_offsets = [
+        0,
+        30,
+        90,
+        180,
+        365,
+        540,
+        730,
+        1095,
+    ]
+    return [reference_date - timedelta(days=offset) for offset in day_offsets]
+
+
+def _compute_mean_ndvi(raster: np.ndarray) -> float | None:
+    """Return mean NDVI over finite pixels, or None if no valid pixels."""
+    valid_pixels = np.isfinite(raster)
+    if not np.any(valid_pixels):
+        return None
+    return float(np.mean(raster[valid_pixels]))
 
 def analyze_crop_health(
     geometry: list,
@@ -86,24 +114,64 @@ def analyze_crop_health(
     summary = compute_summary_stats(classified_image)
     logger.info("✅ Statistics computed")
     
-    # Step 8: Calculate NDVI trend across years
+    # Step 8: Calculate yearly NDVI trend used historically in response
     logger.info("Calculating NDVI trend...")
-    ndvi_trend = []
+    ndvi_trend_yearly = []
     year_keys = ['current', 'year_1', 'year_2']
     for i, year_key in enumerate(year_keys):
         if year_key in ndvi_rasters and ndvi_rasters[year_key] is not None:
             raster = ndvi_rasters[year_key].get('raster')
             date_used = ndvi_rasters[year_key].get('date_used', dates_str[i])
             if raster is not None:
-                valid_pixels = np.isfinite(raster)
-                if np.any(valid_pixels):
-                    mean_ndvi = float(np.mean(raster[valid_pixels]))
-                    ndvi_trend.append({
+                mean_ndvi = _compute_mean_ndvi(raster)
+                if mean_ndvi is not None:
+                    ndvi_trend_yearly.append({
                         "date": date_used,
                         "mean_ndvi": round(mean_ndvi, 4)
                     })
                     logger.info(f"  {date_used}: mean_ndvi = {mean_ndvi:.4f}")
-    logger.info("✅ NDVI trend calculated")
+    logger.info("✅ Yearly NDVI trend calculated")
+
+    # Step 8b: Calculate denser NDVI trend samples for 1M/3M/6M/1Y/3Y UI ranges
+    logger.info("Calculating sampled NDVI trend for multi-range UI...")
+    trend_sample_dates = _build_trend_sample_dates(reference_date)
+    trend_sample_dates_str = [d.strftime("%Y-%m-%d") for d in trend_sample_dates]
+
+    def _fetch_trend_point(date_str: str):
+        try:
+            # Slightly broader cloud tolerance for historical sampling stability.
+            point = fetch_ndvi_for_date(
+                geometry,
+                date_str,
+                window_days=30,
+                cloud_threshold=40,
+            )
+            if not point:
+                return None
+            raster = point.get('raster')
+            if raster is None:
+                return None
+            mean_ndvi = _compute_mean_ndvi(raster)
+            if mean_ndvi is None:
+                return None
+            return {
+                "date": point.get('date_used', date_str),
+                "mean_ndvi": round(mean_ndvi, 4),
+            }
+        except Exception as exc:
+            logger.warning(f"Trend sampling failed for {date_str}: {exc}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        sampled = list(executor.map(_fetch_trend_point, trend_sample_dates_str))
+    ndvi_trend = [p for p in sampled if p is not None]
+    ndvi_trend.sort(key=lambda x: x['date'])
+
+    if len(ndvi_trend) < 4:
+        logger.warning("Insufficient sampled NDVI points; using yearly trend fallback")
+        ndvi_trend = ndvi_trend_yearly
+
+    logger.info(f"✅ Final NDVI trend points for UI: {len(ndvi_trend)}")
     
     # Step 9: Build response
     result = {
@@ -112,6 +180,7 @@ def analyze_crop_health(
         "tile_urls": tile_urls,
         "summary": summary,
         "ndvi_trend": ndvi_trend,
+        "ndvi_trend_yearly": ndvi_trend_yearly,
         "cache_hits": ndvi_rasters['cache_hits']
     }
     

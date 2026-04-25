@@ -307,7 +307,7 @@ def _generate_nvidia_ai_analysis(input_payload):
         "}\n\n"
         "Use only the provided metrics. If uncertain, reduce confidence.\n\n"
         f"Input:\n{json.dumps(input_payload, ensure_ascii=True)}"
-    )
+)
 
     headers = {
         "Authorization": f"Bearer {nvidia_api_key}",
