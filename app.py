@@ -425,6 +425,114 @@ def _build_ai_analysis_input(location_info, crop, pixel_counts, ndwi_pixel_count
         },
     }
 
+
+def _build_news_ai_analysis(news_articles, crop=None, state=None):
+    articles = news_articles if isinstance(news_articles, list) else []
+    if not articles:
+        context = ""
+        if crop or state:
+            context = f" for {crop or 'crop'} in {state or 'your region'}"
+        return f"No recent agricultural news was available{context}. Keep monitoring local advisories and mandi updates for timely decisions."
+
+    source_counts = {}
+    recent_count = 0
+    now = datetime.now()
+
+    for article in articles:
+        if not isinstance(article, dict):
+            continue
+        source = str(article.get("source") or "Unknown").strip()
+        source_counts[source] = source_counts.get(source, 0) + 1
+
+        published = article.get("publishedAt")
+        if isinstance(published, str) and published:
+            try:
+                published_dt = datetime.fromisoformat(published.replace("Z", "+00:00")).replace(tzinfo=None)
+                if (now - published_dt).days <= 3:
+                    recent_count += 1
+            except Exception:
+                pass
+
+    top_sources = sorted(source_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+    sources_text = ", ".join([f"{name} ({count})" for name, count in top_sources]) if top_sources else "mixed sources"
+
+    topic_bits = [bit for bit in [crop, state] if bit]
+    topic_text = " and ".join(topic_bits) if topic_bits else "your farm context"
+
+    return (
+        f"AI News Insight: {len(articles)} relevant articles were reviewed for {topic_text}. "
+        f"Most updates came from {sources_text}. "
+        f"{recent_count} item(s) were published in the last 3 days, indicating "
+        f"{'high' if recent_count >= 5 else 'moderate' if recent_count >= 2 else 'low'} information momentum. "
+        "Prioritize recurring advisories around weather shocks, pest alerts, and policy or procurement changes before planning field operations."
+    )
+
+
+def _build_mandi_ai_analysis(govdata_rates, agmarknet_rates, crop=None, district=None, state=None):
+    rates = govdata_rates if isinstance(govdata_rates, list) else []
+    all_records = []
+    day_avgs = []
+    markets = set()
+
+    for day in rates:
+        if not isinstance(day, dict):
+            continue
+        records = day.get("records", [])
+        if not isinstance(records, list):
+            continue
+
+        prices = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            all_records.append(record)
+            market = record.get("market")
+            if isinstance(market, str) and market.strip():
+                markets.add(market.strip())
+
+            price = _safe_float(record.get("modal_price"), 0.0)
+            if price > 0:
+                prices.append(price)
+
+        if prices:
+            day_avgs.append((day.get("date"), round(sum(prices) / len(prices), 2)))
+
+    if not all_records:
+        context = ""
+        bits = [bit for bit in [crop, district, state] if bit]
+        if bits:
+            context = f" for {' / '.join(bits)}"
+        return f"No mandi records were available{context}. Check data source availability and retry later for trend-based pricing guidance."
+
+    latest_avg = day_avgs[-1][1] if day_avgs else 0.0
+    first_avg = day_avgs[0][1] if day_avgs else 0.0
+    trend_pct = 0.0
+    if first_avg > 0 and latest_avg > 0:
+        trend_pct = round(((latest_avg - first_avg) / first_avg) * 100.0, 2)
+
+    trend_label = "stable"
+    if trend_pct >= 3:
+        trend_label = "upward"
+    elif trend_pct <= -3:
+        trend_label = "downward"
+
+    agmarknet_note = "Agmarknet comparison unavailable."
+    if isinstance(agmarknet_rates, dict):
+        rows = agmarknet_rates.get("rows", [])
+        if isinstance(rows, list) and rows:
+            agmarknet_note = f"Agmarknet has {len(rows)} district row(s) for monthly comparison."
+
+    context_bits = [bit for bit in [crop, district, state] if bit]
+    context = " / ".join(context_bits) if context_bits else "the selected area"
+
+    return (
+        f"AI Mandi Insight: Based on {len(all_records)} records across {len(markets)} market(s) in {context}, "
+        f"modal prices show a {trend_label} 7-day trend ({trend_pct:+.2f}%). "
+        f"Latest average modal price is Rs {latest_avg:.2f} per quintal. "
+        f"{agmarknet_note} "
+        "Use this trend with crop stage and storage flexibility to decide whether to sell immediately or stagger sales."
+    )
+
 class HeatmapRequest(BaseModel):
     coordinates: List[List[float]]  # List of [longitude, latitude] points
     t1: float = 3.0  # Threshold for low yield
@@ -702,15 +810,28 @@ async def generate_heatmap_lite(request: HeatmapRequest):
             "ndwi_pixel_counts": ndwi_pixel_counts,
             "ndre_pixel_counts": ndre_pixel_counts,
             "news": news_articles or [],
+            "news_ai_analysis": _build_news_ai_analysis(
+                news_articles or [],
+                crop=request.crop,
+                state=request.state,
+            ),
             "rate": {
                 "govdata": govdata_rates or [],
                 "agmarknet": agmarknet_rates,
-            }
+            },
+            "mandi_ai_analysis": _build_mandi_ai_analysis(
+                govdata_rates or [],
+                agmarknet_rates,
+                crop=request.crop,
+                district=(location_info or {}).get("district") if isinstance(location_info, dict) else None,
+                state=request.state,
+            ),
         }
 
         if anomaly_data:
             response["anomaly"] = anomaly_data
 
+        ai_input = None
         try:
             ai_input = _build_ai_analysis_input(
                 location_info=location_info,
@@ -721,11 +842,18 @@ async def generate_heatmap_lite(request: HeatmapRequest):
                 anomaly_data=anomaly_data,
             )
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"AI input build failed: {exc}")
-        try:
-            response["ai_analysis"] = _generate_nvidia_ai_analysis(ai_input)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}")
+            logger.warning(f"[lite] ⚠️  AI input build failed, using fallback analysis: {exc}")
+            response["ai_analysis"] = _build_fallback_ai_analysis({})
+
+        if "ai_analysis" not in response:
+            try:
+                response["ai_analysis"] = _generate_nvidia_ai_analysis(ai_input)
+            except Exception as exc:
+                logger.warning(f"[lite] ⚠️  AI analysis unavailable, using fallback analysis: {exc}")
+                metrics = {}
+                if isinstance(ai_input, dict):
+                    metrics = ai_input.get("health_metrics", {})
+                response["ai_analysis"] = _build_fallback_ai_analysis(metrics)
 
         response = sanitize_json_response(response)
 

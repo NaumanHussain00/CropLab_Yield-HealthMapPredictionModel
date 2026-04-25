@@ -35,12 +35,27 @@ SENSOR_ASSETS = {
 
 def initialize_earth_engine():
     """Initialize Google Earth Engine with service account authentication"""
-    try:
-        # Try environment variables first (for production/Render)
-        if os.getenv('GEE_SERVICE_ACCOUNT_EMAIL') and os.getenv('GEE_PRIVATE_KEY'):
+    def _log_auth_exception(exc):
+        error_msg = str(exc)
+        if "Invalid JWT Signature" in error_msg:
+            logger.error(f"❌ Failed to initialize Google Earth Engine: {exc}")
+            logger.error("🕐 JWT SIGNATURE ERROR DETECTED!")
+            logger.error("📋 This is typically caused by system clock synchronization issues.")
+            logger.error("💡 SOLUTION: Synchronize your system clock:")
+            logger.error("   • Windows: Right-click clock -> 'Adjust date/time' -> 'Sync now'")
+            logger.error("   • Or run as Administrator: w32tm /resync")
+            logger.error("   • Ensure 'Set time automatically' is enabled")
+            logger.error("🔄 After syncing, restart the application")
+        else:
+            logger.error(f"❌ Failed to initialize Google Earth Engine: {exc}")
+
+    # Try environment variables first (for production/Render).
+    # If this fails in local development (e.g., stale secrets), fall back to local key file.
+    has_env_credentials = bool(os.getenv('GEE_SERVICE_ACCOUNT_EMAIL') and os.getenv('GEE_PRIVATE_KEY'))
+    if has_env_credentials:
+        try:
             logger.info("🌐 Initializing GEE with environment variables (Production mode)")
-            
-            # Create service account credentials from environment variables
+
             service_account_info = {
                 "type": "service_account",
                 "project_id": os.getenv('GEE_PROJECT_ID', 'pk07007'),
@@ -54,14 +69,12 @@ def initialize_earth_engine():
                 "client_x509_cert_url": os.getenv('GEE_CLIENT_CERT_URL'),
                 "universe_domain": "googleapis.com"
             }
-            
-            # Create a temporary file with the credentials
+
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
                 json.dump(service_account_info, temp_file)
                 temp_file_path = temp_file.name
-            
+
             try:
-                # Initialize with temporary file
                 credentials = ee.ServiceAccountCredentials(
                     email=service_account_info['client_email'],
                     key_file=temp_file_path
@@ -70,22 +83,28 @@ def initialize_earth_engine():
                 logger.info("✅ Google Earth Engine initialized with environment variables")
                 return True
             finally:
-                # Clean up temporary file
                 try:
                     os.unlink(temp_file_path)
-                except:
+                except OSError:
                     pass
-        
-        # Fallback to local file (for development)
-        elif os.path.exists(SERVICE_ACCOUNT_PATH):
+        except Exception as env_exc:
+            logger.warning(f"⚠️  Env-based GEE auth failed: {env_exc}")
+            if os.path.exists(SERVICE_ACCOUNT_PATH):
+                logger.info("↩️  Falling back to local service account file")
+            else:
+                _log_auth_exception(env_exc)
+                return False
+
+    # Fallback to local file (for development)
+    if os.path.exists(SERVICE_ACCOUNT_PATH):
+        try:
             logger.info("📁 Initializing GEE with local service account file (Development mode)")
-            
+
             with open(SERVICE_ACCOUNT_PATH, 'r') as f:
                 service_account = json.load(f)
 
             logger.info(f"Initializing GEE with service account: {service_account.get('client_email', 'Unknown')}")
 
-            # Use the key file path directly with ee.Initialize
             credentials = ee.ServiceAccountCredentials(
                 email=service_account['client_email'],
                 key_file=SERVICE_ACCOUNT_PATH
@@ -93,27 +112,14 @@ def initialize_earth_engine():
             ee.Initialize(credentials)
             logger.info("✅ Google Earth Engine initialized successfully")
             return True
-        else:
-            logger.error("❌ No Google Earth Engine credentials found!")
-            logger.error("💡 For production: Set GEE_SERVICE_ACCOUNT_EMAIL and GEE_PRIVATE_KEY environment variables")
-            logger.error(f"💡 For development: Ensure {SERVICE_ACCOUNT_PATH} exists")
+        except Exception as file_exc:
+            _log_auth_exception(file_exc)
             return False
-            
-    except Exception as e:
-        error_msg = str(e)
-        if "Invalid JWT Signature" in error_msg:
-            logger.error(f"❌ Failed to initialize Google Earth Engine: {e}")
-            logger.error("🕐 JWT SIGNATURE ERROR DETECTED!")
-            logger.error("📋 This is typically caused by system clock synchronization issues.")
-            logger.error("💡 SOLUTION: Synchronize your system clock:")
-            logger.error("   • Windows: Right-click clock → 'Adjust date/time' → 'Sync now'")
-            logger.error("   • Or run as Administrator: w32tm /resync")
-            logger.error("   • Ensure 'Set time automatically' is enabled")
-            logger.error("🔄 After syncing, restart the application")
-            return False
-        else:
-            logger.error(f"❌ Failed to initialize Google Earth Engine: {e}")
-            return False
+
+    logger.error("❌ No Google Earth Engine credentials found!")
+    logger.error("💡 For production: Set GEE_SERVICE_ACCOUNT_EMAIL and GEE_PRIVATE_KEY environment variables")
+    logger.error(f"💡 For development: Ensure {SERVICE_ACCOUNT_PATH} exists")
+    return False
 
 async def get_district_from_coordinates(lat, lon):
     """Get district from coordinates using OpenStreetMap Nominatim API"""
